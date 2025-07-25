@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poker Home Game Manager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'brand-primary': '#10b981',
+            'brand-primary-hover': '#059669',
+            'brand-secondary': '#3b82f6',
+            'brand-secondary-hover': '#2563eb',
+            'brand-danger': '#ef4444',
+            'brand-danger-hover': '#dc2626',
+            'surface-main': '#0a0f1a',
+            'surface-card': '#161e2d',
+            'surface-input': '#2c3a50',
+            'text-primary': '#e2e8f0',
+            'text-secondary': '#94a3b8',
+            'border-default': '#394b61',
+          }
+        }
+      }
+    }
+  </script>
+  <script type="importmap">
+  {
+    "imports": {
+      "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+      "react/": "https://esm.sh/react@^19.1.0/",
+      "react": "https://esm.sh/react@^19.1.0"
+    }
+  }
+  </script>
+</head>
+<body class="bg-surface-main text-text-primary">
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

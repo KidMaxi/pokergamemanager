@@ -1,0 +1,1084 @@
+"use client"
+
+import type React from "react"
+import { useState, useMemo } from "react"
+import type { GameSession, PlayerInGame, Player, CashOutLogRecord, BuyInRecord } from "../types"
+import {
+  formatCurrency,
+  formatDate,
+  formatTime,
+  generateLogId,
+  calculateDuration,
+  formatDurationCompact,
+} from "../utils"
+import Button from "./common/Button"
+import Input from "./common/Input"
+import Modal from "./common/Modal"
+import Card from "./common/Card"
+import LiveTimer from "./common/LiveTimer"
+import PaymentSummary from "./PaymentSummary"
+
+interface ActiveGameScreenProps {
+  session: GameSession
+  players: Player[]
+  onUpdateSession: (updatedSession: GameSession) => void
+  onEndGame: (finalizedSession: GameSession) => void
+  onNavigateToDashboard: () => void
+  onAddNewPlayerGlobally: (playerName: string) => Player | null
+}
+
+interface PlayerGameCardProps {
+  playerInGame: PlayerInGame
+  pointRate: number
+  onBuyIn: () => void
+  onCashOut: () => void
+  onEditBuyIn: (buyInLogId: string) => void
+  onDeleteBuyIn: (buyInLogId: string) => void
+  gameStatus: GameSession["status"]
+  currentPhysicalPointsOnTable: number
+}
+
+const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
+  playerInGame,
+  pointRate,
+  onBuyIn,
+  onCashOut,
+  onEditBuyIn,
+  onDeleteBuyIn,
+  gameStatus,
+  currentPhysicalPointsOnTable,
+}) => {
+  const totalBuyInCash = playerInGame.buyIns.reduce((sum, b) => sum + b.amount, 0)
+  const netProfitOrLoss =
+    playerInGame.cashOutAmount +
+    (playerInGame.status === "active" ? playerInGame.pointStack * pointRate : 0) -
+    totalBuyInCash
+
+  return (
+    <Card className={`mb-3 sm:mb-4 ${playerInGame.status === "cashed_out_early" ? "opacity-60 bg-slate-800" : ""}`}>
+      <div className="space-y-3">
+        <div>
+          <h5 className="text-lg sm:text-xl font-semibold text-brand-primary truncate">{playerInGame.name}</h5>
+          {playerInGame.status === "cashed_out_early" && (
+            <p className="text-xs sm:text-sm text-yellow-400 font-semibold">Player Cashed Out</p>
+          )}
+        </div>
+
+        <div className="space-y-1 text-xs sm:text-sm">
+          <p className="text-text-primary">
+            Points: <span className="font-bold text-white">{playerInGame.pointStack}</span>
+          </p>
+          <p className="text-text-primary">
+            Buy-ins: <span className="text-white">{formatCurrency(totalBuyInCash)}</span> ({playerInGame.buyIns.length})
+          </p>
+          <p className="text-text-primary">
+            Cash-outs: <span className="text-white">{formatCurrency(playerInGame.cashOutAmount)}</span>
+          </p>
+          <p className="text-text-primary">
+            P/L:{" "}
+            <span className={`font-bold ${netProfitOrLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {formatCurrency(netProfitOrLoss)}
+            </span>
+          </p>
+        </div>
+
+        {/* Buy-in log with mobile optimization */}
+        <div>
+          <p className="text-xs font-semibold text-text-secondary mb-1">Buy-ins:</p>
+          {playerInGame.buyIns.length > 0 ? (
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {playerInGame.buyIns.map((buyIn) => (
+                <div key={buyIn.logId} className="flex items-center justify-between bg-slate-800 p-2 rounded text-xs">
+                  <div className="flex-1 min-w-0 pr-2">
+                    <span className="text-white">{formatCurrency(buyIn.amount)}</span>
+                    <span className="text-text-secondary ml-1">at {formatTime(buyIn.time)}</span>
+                    {buyIn.editedAt && <em className="text-slate-400 block">(edited)</em>}
+                  </div>
+                  {gameStatus !== "completed" && (
+                    <div className="flex space-x-1 flex-shrink-0">
+                      <button
+                        onClick={() => onEditBuyIn(buyIn.logId)}
+                        className="text-blue-400 hover:text-blue-300 p-1"
+                        title="Edit"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={() => onDeleteBuyIn(buyIn.logId)}
+                        className="text-red-400 hover:text-red-300 p-1"
+                        title="Delete"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-text-secondary">None yet</p>
+          )}
+        </div>
+
+        {/* Action buttons */}
+        {gameStatus !== "completed" && playerInGame.status === "active" && (
+          <div className="flex space-x-2 pt-2">
+            <Button
+              onClick={onBuyIn}
+              size="sm"
+              variant="secondary"
+              disabled={gameStatus === "pending_close"}
+              className="flex-1 text-xs py-2"
+            >
+              Buy-in
+            </Button>
+            <Button
+              onClick={onCashOut}
+              size="sm"
+              variant="ghost"
+              className="flex-1 bg-gray-600 text-white hover:bg-gray-700 text-xs py-2"
+              disabled={gameStatus === "pending_close"}
+            >
+              Cash Out
+            </Button>
+          </div>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
+  session,
+  players,
+  onUpdateSession,
+  onEndGame,
+  onNavigateToDashboard,
+  onAddNewPlayerGlobally,
+}) => {
+  const [isAddPlayerModalOpen, setIsAddPlayerModalOpen] = useState(false)
+  const [newPlayerNameInModal, setNewPlayerNameInModal] = useState("")
+
+  const [isBuyInModalOpen, setIsBuyInModalOpen] = useState(false)
+  const [buyInPlayerId, setBuyInPlayerId] = useState<string | null>(null)
+  const [buyInAmount, setBuyInAmount] = useState<number>(25)
+
+  const [isCashOutModalOpen, setIsCashOutModalOpen] = useState(false)
+  const [cashOutPlayerId, setCashOutPlayerId] = useState<string | null>(null)
+  const [cashOutPointAmount, setCashOutPointAmount] = useState<number>(0)
+
+  // Buy-in editing states
+  const [isEditBuyInModalOpen, setIsEditBuyInModalOpen] = useState(false)
+  const [editingBuyIn, setEditingBuyIn] = useState<{ playerId: string; buyInLogId: string; amount: number } | null>(
+    null,
+  )
+  const [editBuyInAmount, setEditBuyInAmount] = useState<number>(0)
+
+  // Buy-in deletion states
+  const [isDeleteBuyInModalOpen, setIsDeleteBuyInModalOpen] = useState(false)
+  const [deletingBuyIn, setDeletingBuyIn] = useState<{ playerId: string; buyInLogId: string; amount: number } | null>(
+    null,
+  )
+
+  const [formError, setFormError] = useState("")
+
+  const [isCloseGameConfirmModalOpen, setIsCloseGameConfirmModalOpen] = useState(false)
+
+  const [isFinalizeResultsModalOpen, setIsFinalizeResultsModalOpen] = useState(false)
+  const [finalPointInputs, setFinalPointInputs] = useState<Array<{ playerId: string; name: string; points: string }>>(
+    [],
+  )
+  const [physicalPointsForFinalize, setPhysicalPointsForFinalize] = useState<number>(0)
+  const [finalizeFormError, setFinalizeFormError] = useState("")
+
+  const totalBuyInValueOverall = useMemo(() => {
+    return session.playersInGame.reduce((sum, p) => sum + p.buyIns.reduce((s, b) => s + b.amount, 0), 0)
+  }, [session.playersInGame])
+
+  const totalCashOutValueAcrossAllPlayers = useMemo(() => {
+    return session.playersInGame.reduce((sum, p) => sum + p.cashOutAmount, 0)
+  }, [session.playersInGame])
+
+  // Create a player with automatic standard buy-in
+  const createPlayerWithBuyIn = (name: string): PlayerInGame => {
+    const initialBuyIn: BuyInRecord = {
+      logId: generateLogId(),
+      amount: session.standardBuyInAmount,
+      time: new Date().toISOString(),
+    }
+
+    const pointsFromBuyIn = Math.floor(session.standardBuyInAmount / session.pointToCashRate)
+
+    return {
+      playerId: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: name,
+      pointStack: pointsFromBuyIn,
+      buyIns: [initialBuyIn],
+      cashOutAmount: 0,
+      cashOutLog: [],
+      status: "active",
+    }
+  }
+
+  const handleAddPlayerToGame = () => {
+    if (!newPlayerNameInModal.trim()) {
+      setFormError("Player name cannot be empty.")
+      return
+    }
+
+    const existingPlayerInGame = session.playersInGame.find(
+      (p) => p.name.toLowerCase() === newPlayerNameInModal.trim().toLowerCase(),
+    )
+
+    if (existingPlayerInGame) {
+      setFormError("A player with this name already exists in this game.")
+      return
+    }
+
+    const newPlayerInGame = createPlayerWithBuyIn(newPlayerNameInModal.trim())
+
+    onUpdateSession({
+      ...session,
+      playersInGame: [...session.playersInGame, newPlayerInGame],
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + newPlayerInGame.pointStack,
+    })
+
+    setIsAddPlayerModalOpen(false)
+    setNewPlayerNameInModal("")
+    setFormError("")
+  }
+
+  const openBuyInModal = (playerId: string) => {
+    setBuyInPlayerId(playerId)
+    setBuyInAmount(session.standardBuyInAmount)
+    setIsBuyInModalOpen(true)
+    setFormError("")
+  }
+
+  const handleBuyIn = () => {
+    if (!buyInPlayerId || buyInAmount <= 0) {
+      setFormError("Invalid buy-in amount.")
+      return
+    }
+    const player = session.playersInGame.find((p) => p.playerId === buyInPlayerId)
+    if (!player || player.status === "cashed_out_early") {
+      setFormError("Player not found or has already cashed out.")
+      return
+    }
+    if (session.status === "pending_close" || session.status === "completed") {
+      setFormError("Cannot add buy-ins to a game that is closing or completed.")
+      return
+    }
+    const pointsToAdd = Math.floor(buyInAmount / session.pointToCashRate)
+
+    const updatedSession = {
+      ...session,
+      playersInGame: session.playersInGame.map((p) =>
+        p.playerId === buyInPlayerId
+          ? {
+              ...p,
+              pointStack: p.pointStack + pointsToAdd,
+              buyIns: [...p.buyIns, { logId: generateLogId(), amount: buyInAmount, time: new Date().toISOString() }],
+            }
+          : p,
+      ),
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + pointsToAdd,
+    }
+    onUpdateSession(updatedSession)
+    setIsBuyInModalOpen(false)
+    setBuyInPlayerId(null)
+    setFormError("")
+  }
+
+  // Edit Buy-in Functions
+  const openEditBuyInModal = (playerId: string, buyInLogId: string) => {
+    const player = session.playersInGame.find((p) => p.playerId === playerId)
+    const buyIn = player?.buyIns.find((b) => b.logId === buyInLogId)
+
+    if (player && buyIn) {
+      setEditingBuyIn({ playerId, buyInLogId, amount: buyIn.amount })
+      setEditBuyInAmount(buyIn.amount)
+      setIsEditBuyInModalOpen(true)
+      setFormError("")
+    }
+  }
+
+  const handleEditBuyIn = () => {
+    if (!editingBuyIn || editBuyInAmount <= 0) {
+      setFormError("Invalid buy-in amount.")
+      return
+    }
+
+    const player = session.playersInGame.find((p) => p.playerId === editingBuyIn.playerId)
+    const buyIn = player?.buyIns.find((b) => b.logId === editingBuyIn.buyInLogId)
+
+    if (!player || !buyIn) {
+      setFormError("Buy-in record not found.")
+      return
+    }
+
+    const oldPoints = Math.floor(buyIn.amount / session.pointToCashRate)
+    const newPoints = Math.floor(editBuyInAmount / session.pointToCashRate)
+    const pointsDifference = newPoints - oldPoints
+
+    const updatedSession = {
+      ...session,
+      playersInGame: session.playersInGame.map((p) =>
+        p.playerId === editingBuyIn.playerId
+          ? {
+              ...p,
+              pointStack: p.pointStack + pointsDifference,
+              buyIns: p.buyIns.map((b) =>
+                b.logId === editingBuyIn.buyInLogId
+                  ? { ...b, amount: editBuyInAmount, editedAt: new Date().toISOString() }
+                  : b,
+              ),
+            }
+          : p,
+      ),
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + pointsDifference,
+    }
+
+    onUpdateSession(updatedSession)
+    setIsEditBuyInModalOpen(false)
+    setEditingBuyIn(null)
+    setFormError("")
+  }
+
+  // Delete Buy-in Functions
+  const openDeleteBuyInModal = (playerId: string, buyInLogId: string) => {
+    const player = session.playersInGame.find((p) => p.playerId === playerId)
+    const buyIn = player?.buyIns.find((b) => b.logId === buyInLogId)
+
+    if (player && buyIn) {
+      setDeletingBuyIn({ playerId, buyInLogId, amount: buyIn.amount })
+      setIsDeleteBuyInModalOpen(true)
+      setFormError("")
+    }
+  }
+
+  const handleDeleteBuyIn = () => {
+    if (!deletingBuyIn) return
+
+    const player = session.playersInGame.find((p) => p.playerId === deletingBuyIn.playerId)
+    const buyIn = player?.buyIns.find((b) => b.logId === deletingBuyIn.buyInLogId)
+
+    if (!player || !buyIn) {
+      setFormError("Buy-in record not found.")
+      return
+    }
+
+    // Check if this is the last buy-in for the player
+    if (player.buyIns.length === 1) {
+      setFormError("Cannot delete the last buy-in. A player must have at least one buy-in.")
+      return
+    }
+
+    const pointsToRemove = Math.floor(buyIn.amount / session.pointToCashRate)
+
+    const updatedSession = {
+      ...session,
+      playersInGame: session.playersInGame.map((p) =>
+        p.playerId === deletingBuyIn.playerId
+          ? {
+              ...p,
+              pointStack: Math.max(0, p.pointStack - pointsToRemove),
+              buyIns: p.buyIns.filter((b) => b.logId !== deletingBuyIn.buyInLogId),
+            }
+          : p,
+      ),
+      currentPhysicalPointsOnTable: Math.max(0, session.currentPhysicalPointsOnTable - pointsToRemove),
+    }
+
+    onUpdateSession(updatedSession)
+    setIsDeleteBuyInModalOpen(false)
+    setDeletingBuyIn(null)
+    setFormError("")
+  }
+
+  const openCashOutModal = (playerId: string) => {
+    const player = session.playersInGame.find((p) => p.playerId === playerId)
+    if (player && player.status === "active") {
+      setCashOutPlayerId(playerId)
+      setCashOutPointAmount(player.pointStack > 0 ? player.pointStack : 0)
+      setIsCashOutModalOpen(true)
+      setFormError("")
+    } else {
+      alert("Player has already cashed out or cannot be found.")
+    }
+  }
+
+  const handleCashOut = () => {
+    const finalCashOutAmount = isNaN(cashOutPointAmount) ? 0 : cashOutPointAmount
+    if (!cashOutPlayerId || finalCashOutAmount < 0) {
+      setFormError("Invalid point amount to cash out. Must be non-negative.")
+      return
+    }
+
+    const player = session.playersInGame.find((p) => p.playerId === cashOutPlayerId)
+    if (!player || player.status === "cashed_out_early") {
+      setFormError("Player not found or has already cashed out.")
+      return
+    }
+
+    if (finalCashOutAmount > session.currentPhysicalPointsOnTable) {
+      setFormError("Cannot cash out more points than are currently physically on the table.")
+      return
+    }
+
+    const cashValue = finalCashOutAmount * session.pointToCashRate
+    const newCashOutLogEntry: CashOutLogRecord = {
+      logId: generateLogId(),
+      pointsCashedOut: finalCashOutAmount,
+      cashValue: cashValue,
+      time: new Date().toISOString(),
+    }
+
+    const updatedSession = {
+      ...session,
+      playersInGame: session.playersInGame.map((p) =>
+        p.playerId === cashOutPlayerId
+          ? {
+              ...p,
+              pointStack: 0,
+              cashOutAmount: p.cashOutAmount + cashValue,
+              cashOutLog: [...p.cashOutLog, newCashOutLogEntry],
+              status: "cashed_out_early" as const,
+            }
+          : p,
+      ),
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable - finalCashOutAmount,
+    }
+    onUpdateSession(updatedSession)
+    setIsCashOutModalOpen(false)
+    setCashOutPlayerId(null)
+    setFormError("")
+  }
+
+  const handleInitiateCloseGame = () => {
+    setIsAddPlayerModalOpen(false)
+    setIsBuyInModalOpen(false)
+    setIsCashOutModalOpen(false)
+    setFormError("")
+    setIsCloseGameConfirmModalOpen(true)
+  }
+
+  const handleConfirmCloseGameAction = () => {
+    const newSessionState: GameSession = {
+      ...session,
+      status: "pending_close",
+    }
+    onUpdateSession(newSessionState)
+    setIsCloseGameConfirmModalOpen(false)
+  }
+
+  const openFinalizeResultsModal = () => {
+    setPhysicalPointsForFinalize(session.currentPhysicalPointsOnTable)
+    setFinalPointInputs(
+      session.playersInGame
+        .filter((p) => p.status === "active")
+        .map((p) => ({
+          playerId: p.playerId,
+          name: p.name,
+          points: p.pointStack.toString(),
+        })),
+    )
+    setFinalizeFormError("")
+    setIsFinalizeResultsModalOpen(true)
+  }
+
+  const handleFinalPointInputChange = (playerId: string, value: string) => {
+    setFinalPointInputs((prev) =>
+      prev.map((input) => (input.playerId === playerId ? { ...input, points: value } : input)),
+    )
+  }
+
+  const handleExecuteFinalizeGame = () => {
+    let sumOfEnteredFinalPoints = 0
+    const parsedInputs: Array<{ playerId: string; points: number }> = []
+
+    for (const input of finalPointInputs) {
+      const pointsNum = Number.parseInt(input.points, 10)
+      if (isNaN(pointsNum) || pointsNum < 0) {
+        setFinalizeFormError(`Invalid point amount for ${input.name}. Must be a non-negative number.`)
+        return
+      }
+      parsedInputs.push({ playerId: input.playerId, points: pointsNum })
+      sumOfEnteredFinalPoints += pointsNum
+    }
+
+    if (finalPointInputs.length > 0 && sumOfEnteredFinalPoints !== physicalPointsForFinalize) {
+      setFinalizeFormError(
+        `Sum of final points entered (${sumOfEnteredFinalPoints}) does not match total physical points on table (${physicalPointsForFinalize}). Please ensure all points are accounted for.`,
+      )
+      return
+    }
+    if (finalPointInputs.length === 0 && physicalPointsForFinalize !== 0) {
+      setFinalizeFormError(
+        `There are ${physicalPointsForFinalize} physical points on table but no active players to assign them to. Please ensure cash-outs were processed correctly or adjust player stacks.`,
+      )
+      return
+    }
+
+    setFinalizeFormError("")
+
+    const finalizedSession: GameSession = {
+      ...session,
+      playersInGame: session.playersInGame.map((p) => {
+        if (p.status === "cashed_out_early") {
+          return p
+        }
+        const finalInput = parsedInputs.find((fi) => fi.playerId === p.playerId)
+        const finalPointsForPlayer = finalInput ? finalInput.points : 0
+        const valueOfFinalPoints = finalPointsForPlayer * session.pointToCashRate
+
+        const finalCashOutLogEntry: CashOutLogRecord = {
+          logId: generateLogId(),
+          pointsCashedOut: finalPointsForPlayer,
+          cashValue: valueOfFinalPoints,
+          time: new Date().toISOString(),
+          editedAt: `Game Settlement @ ${formatTime(new Date().toISOString())}`,
+        }
+
+        return {
+          ...p,
+          cashOutAmount: p.cashOutAmount + valueOfFinalPoints,
+          pointStack: 0,
+          cashOutLog: [...p.cashOutLog, finalCashOutLogEntry],
+          status: "cashed_out_early",
+        }
+      }),
+      status: "completed",
+      endTime: new Date().toISOString(),
+      currentPhysicalPointsOnTable: 0,
+    }
+
+    onEndGame(finalizedSession)
+    setIsFinalizeResultsModalOpen(false)
+  }
+
+  const getStatusTextAndColor = () => {
+    switch (session.status) {
+      case "active":
+        return { text: "Active", color: "text-green-400" }
+      case "pending_close":
+        return { text: "Pending Closure", color: "text-yellow-400" }
+      case "completed":
+        return { text: "Completed", color: "text-red-400" }
+      default:
+        return { text: "Unknown", color: "text-text-secondary" }
+    }
+  }
+  const currentStatusStyle = getStatusTextAndColor()
+
+  if (session.status === "completed") {
+    const totalDuration = session.endTime ? calculateDuration(session.startTime, session.endTime) : 0
+
+    return (
+      <div className="container mx-auto p-4">
+        <Card title={`Game Summary: ${session.name}`}>
+          <p className="text-lg text-text-secondary mb-1">This game has ended.</p>
+          <p className={`text-sm font-semibold mb-2 ${currentStatusStyle.color}`}>Status: {currentStatusStyle.text}</p>
+          <p className="text-text-primary">
+            Ended: <span className="text-white">{session.endTime ? formatDate(session.endTime) : "N/A"}</span>
+          </p>
+          <p className="text-text-primary">
+            Total Time Played:{" "}
+            <span className="font-mono text-brand-primary">{formatDurationCompact(totalDuration)}</span>
+          </p>
+          <p className="text-text-primary">
+            Point Rate: <span className="text-white">{formatCurrency(session.pointToCashRate)} per point</span>
+          </p>
+          <p className="text-text-primary">
+            Total Buy-in Value: <span className="text-white">{formatCurrency(totalBuyInValueOverall)}</span>
+          </p>
+          <h4 className="text-xl font-semibold mt-6 mb-3 text-brand-primary">Player Results:</h4>
+          {session.playersInGame.length > 0 ? (
+            session.playersInGame
+              .map((p) => {
+                const totalPlayerBuyIn = p.buyIns.reduce((s, b) => s + b.amount, 0)
+                const net = p.cashOutAmount - totalPlayerBuyIn
+                return { ...p, net }
+              })
+              .sort((a, b) => b.net - a.net)
+              .map((p) => (
+                <div key={p.playerId} className="mb-3 p-3 bg-slate-700 rounded-md shadow">
+                  <p className="font-semibold text-lg text-white">{p.name}</p>
+                  <p className="text-text-primary">
+                    Total Buy-in:{" "}
+                    <span className="text-white">{formatCurrency(p.buyIns.reduce((s, b) => s + b.amount, 0))}</span> (
+                    {p.buyIns.length} {p.buyIns.length === 1 ? "entry" : "entries"})
+                  </p>
+                  <p className="text-text-primary">
+                    Total Value Realized: <span className="text-white">{formatCurrency(p.cashOutAmount)}</span>
+                  </p>
+                  <p className="text-text-primary">
+                    Net P/L:{" "}
+                    <span className={`font-bold ${p.net >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {formatCurrency(p.net)}
+                    </span>
+                  </p>
+                </div>
+              ))
+          ) : (
+            <p className="text-text-secondary">No players participated or results are not available.</p>
+          )}
+
+          <div className="mt-6">
+            <PaymentSummary session={session} />
+          </div>
+
+          <Button onClick={onNavigateToDashboard} variant="secondary" className="mt-6 w-full sm:w-auto">
+            Back to Dashboard
+          </Button>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="container mx-auto p-3 sm:p-4">
+      <Card className="mb-4 sm:mb-6">
+        <div className="space-y-3 sm:space-y-4">
+          <div className="flex flex-col space-y-2 sm:space-y-3">
+            <div className="flex justify-between items-start">
+              <div className="flex-1 min-w-0 pr-3">
+                <h2 className="text-xl sm:text-2xl font-bold text-brand-primary truncate">{session.name}</h2>
+                <div className="space-y-1 text-xs sm:text-sm text-text-secondary">
+                  <p>Started: {formatDate(session.startTime, false)}</p>
+                  <p>
+                    Time: <LiveTimer startTime={session.startTime} className="text-green-400" />
+                  </p>
+                  <p>Rate: {formatCurrency(session.pointToCashRate)}/pt</p>
+                  <p>Buy-in: {formatCurrency(session.standardBuyInAmount)}</p>
+                  <p className={`font-semibold ${currentStatusStyle.color}`}>Status: {currentStatusStyle.text}</p>
+                </div>
+              </div>
+              {session.status === "active" && (
+                <Button
+                  onClick={handleInitiateCloseGame}
+                  variant="danger"
+                  size="sm"
+                  className="text-xs px-2 py-1 flex-shrink-0"
+                >
+                  Close Game
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-border-default space-y-2 text-sm sm:text-base">
+            <p className="text-text-primary">
+              Total Buy-ins: <span className="font-semibold text-white">{formatCurrency(totalBuyInValueOverall)}</span>
+            </p>
+            <p className="text-text-primary">
+              Current Pot:{" "}
+              <span className="font-semibold text-white">
+                {formatCurrency(totalBuyInValueOverall - totalCashOutValueAcrossAllPlayers)}
+              </span>
+            </p>
+            <p className="text-text-primary">
+              Points in Play: <span className="font-semibold text-white">{session.currentPhysicalPointsOnTable}</span>
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {session.status === "pending_close" && (
+        <>
+          <Card className="mb-6 bg-yellow-800 border border-yellow-400">
+            <h3 className="text-xl font-semibold text-white">Game Pending Closure</h3>
+            <p className="text-yellow-100 mt-2">
+              No more buy-ins are allowed. Any remaining active players must cash out their points, or their final
+              stacks must be recorded to complete the game.
+            </p>
+          </Card>
+          <Button onClick={openFinalizeResultsModal} variant="primary" className="mb-6 w-full sm:w-auto">
+            Record Final Standings & Complete Game
+          </Button>
+        </>
+      )}
+
+      {session.status === "active" && (
+        <div className="mb-6 flex space-x-3">
+          <Button
+            onClick={() => {
+              setIsAddPlayerModalOpen(true)
+              setNewPlayerNameInModal("")
+              setFormError("")
+            }}
+            variant="primary"
+          >
+            Add New Player to Game
+          </Button>
+        </div>
+      )}
+
+      {session.playersInGame.length === 0 && session.status === "active" && (
+        <p className="text-text-secondary text-center">No players in this game yet. Add some players to start!</p>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+        {session.playersInGame.map((p) => (
+          <PlayerGameCard
+            key={p.playerId}
+            playerInGame={p}
+            pointRate={session.pointToCashRate}
+            onBuyIn={() => openBuyInModal(p.playerId)}
+            onCashOut={() => openCashOutModal(p.playerId)}
+            onEditBuyIn={(buyInLogId) => openEditBuyInModal(p.playerId, buyInLogId)}
+            onDeleteBuyIn={(buyInLogId) => openDeleteBuyInModal(p.playerId, buyInLogId)}
+            gameStatus={session.status}
+            currentPhysicalPointsOnTable={session.currentPhysicalPointsOnTable}
+          />
+        ))}
+      </div>
+
+      {/* Close Game Confirmation Modal */}
+      <Modal
+        isOpen={isCloseGameConfirmModalOpen}
+        onClose={() => setIsCloseGameConfirmModalOpen(false)}
+        title="Confirm Close Game"
+      >
+        <div className="space-y-4">
+          <p className="text-text-secondary">
+            Are you sure you want to close this game? No more buy-ins will be allowed. You will then need to finalize
+            the game by entering each player's final point counts or having them cash out.
+          </p>
+          <div className="flex justify-end space-x-2 pt-2">
+            <Button type="button" variant="ghost" onClick={() => setIsCloseGameConfirmModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmCloseGameAction} variant="danger">
+              Confirm Close Game
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Finalize Results Modal */}
+      <Modal
+        isOpen={isFinalizeResultsModalOpen}
+        onClose={() => setIsFinalizeResultsModalOpen(false)}
+        title="Record Final Game Standings"
+      >
+        <div>
+          <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+            <p className="text-text-secondary text-sm">
+              Enter the final point count for each <strong className="text-yellow-300">active</strong> player. Players
+              who already cashed out early are settled. The sum of these points must equal the total physical points
+              remaining on the table.
+            </p>
+            <p className="text-sm text-text-secondary font-semibold">
+              Total Physical Points on Table to Account For:{" "}
+              <span className="text-white">{physicalPointsForFinalize}</span>
+            </p>
+
+            {finalPointInputs.length > 0 ? (
+              finalPointInputs.map((input) => (
+                <div key={input.playerId} className="flex items-center justify-between">
+                  <label htmlFor={`final-points-${input.playerId}`} className="text-text-primary mr-2">
+                    <span className="text-white">{input.name}</span> (Active):
+                  </label>
+                  <Input
+                    id={`final-points-${input.playerId}`}
+                    type="number"
+                    value={input.points}
+                    onChange={(e) => handleFinalPointInputChange(input.playerId, e.target.value)}
+                    placeholder="Final Points"
+                    className="w-32"
+                    min="0"
+                  />
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-yellow-300">
+                No active players remaining to finalize, or all points have been cashed out.
+              </p>
+            )}
+
+            {/* Replace the existing sum display paragraph with this enhanced version */}
+            <div className="bg-slate-700 p-3 rounded-lg border">
+              <p className="text-sm text-text-secondary font-semibold mb-2">Points Entered vs. Table Total:</p>
+              <div className="flex justify-between items-center">
+                <span className="text-text-secondary text-sm">
+                  Points Entered:{" "}
+                  <span className="text-white">
+                    {finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)}
+                  </span>
+                </span>
+                <span className="text-text-secondary text-sm">
+                  Table Total: <span className="text-white">{physicalPointsForFinalize}</span>
+                </span>
+              </div>
+              <div className="mt-2 text-center">
+                {(() => {
+                  const enteredSum = finalPointInputs.reduce(
+                    (sum, item) => sum + (Number.parseInt(item.points, 10) || 0),
+                    0,
+                  )
+                  const difference = enteredSum - physicalPointsForFinalize
+
+                  if (difference === 0) {
+                    return <span className="text-green-400 font-bold text-lg">✓ Perfect Match (0)</span>
+                  } else if (difference > 0) {
+                    return <span className="text-red-400 font-bold text-lg">⚠️ Over by +{difference} points</span>
+                  } else {
+                    return <span className="text-yellow-400 font-bold text-lg">⚠️ Short by {difference} points</span>
+                  }
+                })()}
+              </div>
+            </div>
+
+            {finalizeFormError && <p className="text-sm text-red-500">{finalizeFormError}</p>}
+          </div>
+          <div className="flex justify-end space-x-2 pt-4 mt-4 border-t border-border-default">
+            <Button type="button" variant="ghost" onClick={() => setIsFinalizeResultsModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleExecuteFinalizeGame}
+              variant="primary"
+              disabled={
+                (finalPointInputs.length === 0 && physicalPointsForFinalize !== 0) ||
+                (finalPointInputs.length > 0 &&
+                  finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0) !==
+                    physicalPointsForFinalize)
+              }
+            >
+              Confirm & Complete Game
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Player Modal */}
+      <Modal
+        isOpen={isAddPlayerModalOpen}
+        onClose={() => {
+          setIsAddPlayerModalOpen(false)
+          setNewPlayerNameInModal("")
+          setFormError("")
+        }}
+        title="Add New Player to Game"
+      >
+        <div className="space-y-4">
+          <Input
+            label="Player Full Name"
+            id="newPlayerNameInModal"
+            type="text"
+            value={newPlayerNameInModal}
+            onChange={(e) => setNewPlayerNameInModal(e.target.value)}
+            placeholder="e.g., Alex Johnson"
+          />
+          <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
+            <p className="text-blue-200 text-sm">
+              <strong>Auto Buy-in:</strong> This player will automatically receive a{" "}
+              <span className="text-white font-semibold">{formatCurrency(session.standardBuyInAmount)}</span> buy-in (
+              <span className="text-white font-semibold">
+                {Math.floor(session.standardBuyInAmount / session.pointToCashRate)} points
+              </span>
+              ) when added to the game.
+            </p>
+          </div>
+
+          {formError && <p className="text-sm text-red-500">{formError}</p>}
+
+          <div className="flex justify-end space-x-2 pt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setIsAddPlayerModalOpen(false)
+                setNewPlayerNameInModal("")
+                setFormError("")
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddPlayerToGame}
+              variant="primary"
+              disabled={!newPlayerNameInModal.trim() || session.status === "pending_close"}
+            >
+              Add Player with Buy-in
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Buy-in Modal */}
+      <Modal
+        isOpen={isBuyInModalOpen}
+        onClose={() => setIsBuyInModalOpen(false)}
+        title={`Buy-in for ${session.playersInGame.find((p) => p.playerId === buyInPlayerId)?.name || ""}`}
+      >
+        <div className="space-y-4">
+          <Input
+            label="Buy-in Amount (Cash)"
+            id="buyInAmount"
+            type="number"
+            value={buyInAmount}
+            onChange={(e) => setBuyInAmount(Number.parseFloat(e.target.value))}
+            min="0.01"
+            step="0.01"
+            disabled={session.status === "pending_close"}
+          />
+          <p className="text-sm text-text-secondary">
+            Player will receive{" "}
+            <span className="text-white">
+              {buyInAmount > 0 && session.pointToCashRate > 0 ? Math.floor(buyInAmount / session.pointToCashRate) : 0}
+            </span>{" "}
+            points.
+          </p>
+          {formError && <p className="text-sm text-red-500">{formError}</p>}
+          <div className="flex justify-end space-x-2">
+            <Button type="button" variant="ghost" onClick={() => setIsBuyInModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleBuyIn}
+              variant="primary"
+              disabled={buyInAmount <= 0 || session.status === "pending_close"}
+            >
+              Confirm Buy-in
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Buy-in Modal */}
+      <Modal
+        isOpen={isEditBuyInModalOpen}
+        onClose={() => {
+          setIsEditBuyInModalOpen(false)
+          setEditingBuyIn(null)
+          setFormError("")
+        }}
+        title="Edit Buy-in"
+      >
+        <div className="space-y-4">
+          <Input
+            label="Buy-in Amount (Cash)"
+            id="editBuyInAmount"
+            type="number"
+            value={editBuyInAmount}
+            onChange={(e) => setEditBuyInAmount(Number.parseFloat(e.target.value))}
+            min="0.01"
+            step="0.01"
+          />
+          <p className="text-sm text-text-secondary">
+            Player will have{" "}
+            <span className="text-white">
+              {editBuyInAmount > 0 && session.pointToCashRate > 0
+                ? Math.floor(editBuyInAmount / session.pointToCashRate)
+                : 0}
+            </span>{" "}
+            points from this buy-in.
+          </p>
+          {formError && <p className="text-sm text-red-500">{formError}</p>}
+          <div className="flex justify-end space-x-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setIsEditBuyInModalOpen(false)
+                setEditingBuyIn(null)
+                setFormError("")
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleEditBuyIn} variant="primary" disabled={editBuyInAmount <= 0}>
+              Save Changes
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete Buy-in Modal */}
+      <Modal
+        isOpen={isDeleteBuyInModalOpen}
+        onClose={() => {
+          setIsDeleteBuyInModalOpen(false)
+          setDeletingBuyIn(null)
+          setFormError("")
+        }}
+        title="Delete Buy-in"
+      >
+        <div className="space-y-4">
+          <p className="text-text-secondary">
+            Are you sure you want to delete this buy-in of{" "}
+            <span className="text-white font-semibold">{formatCurrency(deletingBuyIn?.amount || 0)}</span>?
+          </p>
+          <p className="text-sm text-yellow-300">
+            This will remove{" "}
+            <span className="text-white font-semibold">
+              {deletingBuyIn ? Math.floor(deletingBuyIn.amount / session.pointToCashRate) : 0} points
+            </span>{" "}
+            from the player's stack and cannot be undone.
+          </p>
+          {formError && <p className="text-sm text-red-500">{formError}</p>}
+          <div className="flex justify-end space-x-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setIsDeleteBuyInModalOpen(false)
+                setDeletingBuyIn(null)
+                setFormError("")
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleDeleteBuyIn} variant="danger">
+              Delete Buy-in
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Cash Out Modal */}
+      <Modal
+        isOpen={isCashOutModalOpen}
+        onClose={() => setIsCashOutModalOpen(false)}
+        title={`Cash out & Leave for ${session.playersInGame.find((p) => p.playerId === cashOutPlayerId)?.name || ""}`}
+      >
+        <div className="space-y-4">
+          <Input
+            label="Point Amount to Cash Out from Table"
+            id="cashOutPointAmount"
+            type="number"
+            value={cashOutPointAmount}
+            onChange={(e) =>
+              setCashOutPointAmount(e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10) || 0)
+            }
+            min="0"
+            step="1"
+            max={session.currentPhysicalPointsOnTable}
+          />
+          <p className="text-sm text-text-secondary">
+            This player will receive:{" "}
+            <span className="text-white">{formatCurrency(cashOutPointAmount * session.pointToCashRate)}</span> and will
+            be marked as 'Cashed Out Early'.
+          </p>
+          {formError && <p className="text-sm text-red-500">{formError}</p>}
+          <div className="flex justify-end space-x-2">
+            <Button type="button" variant="ghost" onClick={() => setIsCashOutModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCashOut}
+              variant="primary"
+              disabled={cashOutPointAmount < 0 || cashOutPointAmount > session.currentPhysicalPointsOnTable}
+            >
+              Confirm Cash Out & Player Leaves
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
+export default ActiveGameScreen

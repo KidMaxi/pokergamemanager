@@ -1,0 +1,109 @@
+"use client"
+
+import type React from "react"
+
+import { useState } from "react"
+import { useAuth } from "../../contexts/AuthContext"
+import Modal from "../common/Modal"
+import Input from "../common/Input"
+import Button from "../common/Button"
+
+interface UserProfileProps {
+  isOpen: boolean
+  onClose: () => void
+}
+
+export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
+  const { user, profile, updateProfile, signOut } = useAuth()
+  const [fullName, setFullName] = useState(profile?.full_name || "")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      const { error } = await updateProfile({
+        full_name: fullName.trim(),
+      })
+
+      if (error) {
+        setError(error.message)
+      } else {
+        setSuccess("Profile updated successfully!")
+      }
+    } catch (err) {
+      setError("An unexpected error occurred")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    try {
+      await signOut()
+      onClose()
+    } catch (err) {
+      setError("Error signing out")
+    }
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="User Profile">
+      <div className="space-y-6">
+        {/* User Info */}
+        <div className="bg-surface-card p-4 rounded-lg">
+          <h3 className="text-lg font-semibold text-text-primary mb-2">Account Information</h3>
+          <p className="text-text-secondary">
+            <strong>Email:</strong> {user?.email}
+          </p>
+          <p className="text-text-secondary">
+            <strong>Account Created:</strong>{" "}
+            {profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "N/A"}
+          </p>
+          {profile?.is_admin && (
+            <p className="text-brand-primary font-semibold">
+              <strong>Admin Account</strong>
+            </p>
+          )}
+        </div>
+
+        {/* Update Profile Form */}
+        <form onSubmit={handleUpdateProfile} className="space-y-4">
+          <Input
+            label="Full Name"
+            id="fullName"
+            type="text"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Enter your full name"
+          />
+
+          {error && <div className="text-red-500 text-sm bg-red-50 border border-red-200 rounded p-3">{error}</div>}
+
+          {success && (
+            <div className="text-green-500 text-sm bg-green-50 border border-green-200 rounded p-3">{success}</div>
+          )}
+
+          <Button type="submit" variant="primary" disabled={loading} className="w-full">
+            {loading ? "Updating..." : "Update Profile"}
+          </Button>
+        </form>
+
+        {/* Actions */}
+        <div className="flex justify-between pt-4 border-t border-border-default">
+          <Button onClick={onClose} variant="ghost">
+            Close
+          </Button>
+          <Button onClick={handleSignOut} variant="danger">
+            Sign Out
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
