@@ -79,7 +79,7 @@ const FriendsPage: React.FC = () => {
 
       setFriends(friendsWithProfiles)
 
-      // Load sent requests
+      // Load sent requests (only pending ones)
       const { data: sentData, error: sentError } = await supabase
         .from("friend_requests")
         .select("*")
@@ -110,7 +110,7 @@ const FriendsPage: React.FC = () => {
         setSentRequests(sentWithProfiles)
       }
 
-      // Load received requests
+      // Load received requests (only pending ones)
       const { data: receivedData, error: receivedError } = await supabase
         .from("friend_requests")
         .select("*")
@@ -189,7 +189,7 @@ const FriendsPage: React.FC = () => {
         return
       }
 
-      // Check if request already exists
+      // Check if request already exists (only pending ones exist now)
       const { data: existingRequest } = await supabase
         .from("friend_requests")
         .select("id, status")
@@ -199,11 +199,7 @@ const FriendsPage: React.FC = () => {
         .single()
 
       if (existingRequest) {
-        if (existingRequest.status === "pending") {
-          setError("A friend request is already pending with this user")
-        } else {
-          setError("A friend request already exists with this user")
-        }
+        setError("A friend request is already pending with this user")
         return
       }
 
@@ -377,7 +373,7 @@ const FriendsPage: React.FC = () => {
             ) : (
               friends.map((friendship) => (
                 <Card key={friendship.id} className="p-4">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
                     <div className="flex items-center space-x-4">
                       <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
                         {friendship.friend_profile?.full_name?.charAt(0) ||
@@ -389,7 +385,7 @@ const FriendsPage: React.FC = () => {
                           {friendship.friend_profile?.full_name || "Unknown User"}
                         </h3>
                         <p className="text-text-secondary text-sm">{friendship.friend_profile?.email}</p>
-                        <div className="flex space-x-4 mt-1 text-xs text-text-secondary">
+                        <div className="flex flex-wrap gap-x-4 mt-1 text-xs text-text-secondary">
                           <span>
                             P/L:{" "}
                             <span
@@ -404,10 +400,7 @@ const FriendsPage: React.FC = () => {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs text-text-secondary">
-                        Friends since {formatDate(friendship.created_at, false)}
-                      </span>
+                    <div className="flex justify-end">
                       <Button onClick={() => handleRemoveFriend(friendship.friend_id)} variant="danger" size="sm">
                         Remove
                       </Button>
@@ -428,7 +421,7 @@ const FriendsPage: React.FC = () => {
             ) : (
               receivedRequests.map((request) => (
                 <Card key={request.id} className="p-4">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
                     <div className="flex items-center space-x-4">
                       <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
                         {request.sender_profile?.full_name?.charAt(0) ||
@@ -467,7 +460,7 @@ const FriendsPage: React.FC = () => {
             ) : (
               sentRequests.map((request) => (
                 <Card key={request.id} className="p-4">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
                     <div className="flex items-center space-x-4">
                       <div className="w-12 h-12 bg-gray-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
                         {request.receiver_profile?.full_name?.charAt(0) ||
@@ -482,7 +475,7 @@ const FriendsPage: React.FC = () => {
                         <p className="text-xs text-text-secondary">Sent {formatDate(request.created_at, false)}</p>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
                       <span className="text-xs text-yellow-400 bg-yellow-900/20 px-2 py-1 rounded">Pending</span>
                       <Button onClick={() => handleCancelRequest(request.id)} variant="ghost" size="sm">
                         Cancel
