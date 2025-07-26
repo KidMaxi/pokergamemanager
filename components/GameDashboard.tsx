@@ -364,15 +364,10 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
     setLoadingFriends(true)
     try {
-      // Fixed query - use explicit join instead of nested select
+      // Get friendships
       const { data: friendsData, error } = await supabase
         .from("friendships")
-        .select(`
-          id,
-          user_id,
-          friend_id,
-          created_at
-        `)
+        .select("id, user_id, friend_id, created_at")
         .eq("user_id", user.id)
 
       if (error) {
@@ -386,7 +381,7 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         return
       }
 
-      // Get friend profiles separately
+      // Get friend profiles
       const friendIds = friendsData.map((f) => f.friend_id)
       const { data: profilesData, error: profilesError } = await supabase
         .from("profiles")

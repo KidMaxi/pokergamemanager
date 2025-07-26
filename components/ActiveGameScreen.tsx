@@ -38,6 +38,7 @@ interface PlayerGameCardProps {
   onDeleteBuyIn: (buyInLogId: string) => void
   gameStatus: GameSession["status"]
   currentPhysicalPointsOnTable: number
+  isGameOwner: boolean // Add this prop to control permissions
 }
 
 const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
@@ -49,6 +50,7 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
   onDeleteBuyIn,
   gameStatus,
   currentPhysicalPointsOnTable,
+  isGameOwner,
 }) => {
   const totalBuyInCash = playerInGame.buyIns.reduce((sum, b) => sum + b.amount, 0)
   const netProfitOrLoss =
@@ -96,7 +98,8 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
                     <span className="text-text-secondary ml-1">at {formatTime(buyIn.time)}</span>
                     {buyIn.editedAt && <em className="text-slate-400 block">(edited)</em>}
                   </div>
-                  {gameStatus !== "completed" && (
+                  {/* Only show edit/delete buttons if user is the game owner */}
+                  {gameStatus !== "completed" && isGameOwner && (
                     <div className="flex space-x-1 flex-shrink-0">
                       <button
                         onClick={() => onEditBuyIn(buyIn.logId)}
@@ -122,8 +125,8 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
           )}
         </div>
 
-        {/* Action buttons */}
-        {gameStatus !== "completed" && playerInGame.status === "active" && (
+        {/* Action buttons - only show if user is the game owner */}
+        {gameStatus !== "completed" && playerInGame.status === "active" && isGameOwner && (
           <div className="flex space-x-2 pt-2">
             <Button
               onClick={onBuyIn}
@@ -202,6 +205,9 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   )
   const [physicalPointsForFinalize, setPhysicalPointsForFinalize] = useState<number>(0)
   const [finalizeFormError, setFinalizeFormError] = useState("")
+
+  // Check if current user is the game owner
+  const isGameOwner = session.isOwner !== false
 
   const totalBuyInValueOverall = useMemo(() => {
     return session.playersInGame.reduce((sum, p) => sum + p.buyIns.reduce((s, b) => s + b.amount, 0), 0)
@@ -602,15 +608,15 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
   const openFinalizeResultsModal = () => {
     setPhysicalPointsForFinalize(session.currentPhysicalPointsOnTable)
-    setFinalPointInputs(
-      session.playersInGame
-        .filter((p) => p.status === "active")
-        .map((p) => ({
-          playerId: p.playerId,
-          name: p.name,
-          points: p.pointStack.toString(),
-        })),
-    )
+    const activePlayersInputs = session.playersInGame
+      .filter((p) => p.status === "active")
+      .map((p) => ({
+        playerId: p.playerId,
+        name: p.name,
+        points: p.pointStack.toString(),
+      }))
+
+    setFinalPointInputs(activePlayersInputs)
     setFinalizeFormError("")
     setIsFinalizeResultsModalOpen(true)
   }
@@ -635,15 +641,10 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       sumOfEnteredFinalPoints += pointsNum
     }
 
+    // Allow finalization if no active players remain OR if points match exactly
     if (finalPointInputs.length > 0 && sumOfEnteredFinalPoints !== physicalPointsForFinalize) {
       setFinalizeFormError(
         `Sum of final points entered (${sumOfEnteredFinalPoints}) does not match total physical points on table (${physicalPointsForFinalize}). Please ensure all points are accounted for.`,
-      )
-      return
-    }
-    if (finalPointInputs.length === 0 && physicalPointsForFinalize !== 0) {
-      setFinalizeFormError(
-        `There are ${physicalPointsForFinalize} physical points on table but no active players to assign them to. Please ensure cash-outs were processed correctly or adjust player stacks.`,
       )
       return
     }
@@ -781,12 +782,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   <p>Buy-in: {formatCurrency(session.standardBuyInAmount)}</p>
                   <p className={`font-semibold ${currentStatusStyle.color}`}>Status: {currentStatusStyle.text}</p>
                   {session.isOwner === false && (
-                    <p className="text-blue-400 font-semibold">You were invited to this game</p>
+                    <p className="text-blue-400 font-semibold">You were invited to this game (Read-only)</p>
                   )}
                 </div>
               </div>
               {/* Only show close game button for games the user owns */}
-              {session.status === "active" && session.isOwner !== false && (
+              {session.status === "active" && isGameOwner && (
                 <Button
                   onClick={handleInitiateCloseGame}
                   variant="danger"
@@ -816,7 +817,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </div>
       </Card>
 
-      {session.status === "pending_close" && session.isOwner !== false && (
+      {/* Show different messages based on ownership and game status */}
+      {session.status === "pending_close" && isGameOwner && (
         <>
           <Card className="mb-6 bg-yellow-800 border border-yellow-400">
             <h3 className="text-xl font-semibold text-white">Game Pending Closure</h3>
@@ -831,7 +833,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </>
       )}
 
-      {session.status === "pending_close" && session.isOwner === false && (
+      {session.status === "pending_close" && !isGameOwner && (
         <Card className="mb-6 bg-yellow-800 border border-yellow-400">
           <h3 className="text-xl font-semibold text-white">Game Pending Closure</h3>
           <p className="text-yellow-100 mt-2">
@@ -841,7 +843,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </Card>
       )}
 
-      {session.status === "active" && (
+      {/* Only show action buttons for game owners */}
+      {session.status === "active" && isGameOwner && (
         <div className="mb-6 flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3">
           <Button
             onClick={() => {
@@ -870,8 +873,22 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </div>
       )}
 
+      {/* Show read-only message for invited players */}
+      {session.status === "active" && !isGameOwner && (
+        <Card className="mb-6 bg-blue-900/20 border border-blue-600">
+          <h3 className="text-lg font-semibold text-blue-200">Read-Only Access</h3>
+          <p className="text-blue-100 mt-2">
+            You were invited to view this game. Only the game host can add players, manage buy-ins, and control the game
+            flow.
+          </p>
+        </Card>
+      )}
+
       {session.playersInGame.length === 0 && session.status === "active" && (
-        <p className="text-text-secondary text-center">No players in this game yet. Add some players to start!</p>
+        <p className="text-text-secondary text-center">
+          No players in this game yet.{" "}
+          {isGameOwner ? "Add some players to start!" : "Wait for the host to add players."}
+        </p>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
@@ -886,458 +903,467 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             onDeleteBuyIn={(buyInLogId) => openDeleteBuyInModal(p.playerId, buyInLogId)}
             gameStatus={session.status}
             currentPhysicalPointsOnTable={session.currentPhysicalPointsOnTable}
+            isGameOwner={isGameOwner}
           />
         ))}
       </div>
 
-      {/* Close Game Confirmation Modal */}
-      <Modal
-        isOpen={isCloseGameConfirmModalOpen}
-        onClose={() => setIsCloseGameConfirmModalOpen(false)}
-        title="Confirm Close Game"
-      >
-        <div className="space-y-4">
-          <p className="text-text-secondary">
-            Are you sure you want to close this game? No more buy-ins will be allowed. You will then need to finalize
-            the game by entering each player's final point counts or having them cash out.
-          </p>
-          <div className="flex justify-end space-x-2 pt-2">
-            <Button type="button" variant="ghost" onClick={() => setIsCloseGameConfirmModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleConfirmCloseGameAction} variant="danger">
-              Confirm Close Game
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Finalize Results Modal */}
-      <Modal
-        isOpen={isFinalizeResultsModalOpen}
-        onClose={() => setIsFinalizeResultsModalOpen(false)}
-        title="Record Final Game Standings"
-      >
-        <div>
-          <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
-            <p className="text-text-secondary text-sm">
-              Enter the final point count for each <strong className="text-yellow-300">active</strong> player. Players
-              who already cashed out early are settled. The sum of these points must equal the total physical points
-              remaining on the table.
-            </p>
-            <p className="text-sm text-text-secondary font-semibold">
-              Total Physical Points on Table to Account For:{" "}
-              <span className="text-white">{physicalPointsForFinalize}</span>
-            </p>
-
-            {finalPointInputs.length > 0 ? (
-              finalPointInputs.map((input) => (
-                <div key={input.playerId} className="flex items-center justify-between">
-                  <label htmlFor={`final-points-${input.playerId}`} className="text-text-primary mr-2">
-                    <span className="text-white">{input.name}</span> (Active):
-                  </label>
-                  <Input
-                    id={`final-points-${input.playerId}`}
-                    type="number"
-                    value={input.points}
-                    onChange={(e) => handleFinalPointInputChange(input.playerId, e.target.value)}
-                    placeholder="Final Points"
-                    className="w-32"
-                    min="0"
-                  />
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-yellow-300">
-                No active players remaining to finalize, or all points have been cashed out.
+      {/* Only show modals if user is the game owner */}
+      {isGameOwner && (
+        <>
+          {/* Close Game Confirmation Modal */}
+          <Modal
+            isOpen={isCloseGameConfirmModalOpen}
+            onClose={() => setIsCloseGameConfirmModalOpen(false)}
+            title="Confirm Close Game"
+          >
+            <div className="space-y-4">
+              <p className="text-text-secondary">
+                Are you sure you want to close this game? No more buy-ins will be allowed. You will then need to
+                finalize the game by entering each player's final point counts or having them cash out.
               </p>
-            )}
-
-            {/* Replace the existing sum display paragraph with this enhanced version */}
-            <div className="bg-slate-700 p-3 rounded-lg border">
-              <p className="text-sm text-text-secondary font-semibold mb-2">Points Entered vs. Table Total:</p>
-              <div className="flex justify-between items-center">
-                <span className="text-text-secondary text-sm">
-                  Points Entered:{" "}
-                  <span className="text-white">
-                    {finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)}
-                  </span>
-                </span>
-                <span className="text-text-secondary text-sm">
-                  Table Total: <span className="text-white">{physicalPointsForFinalize}</span>
-                </span>
-              </div>
-              <div className="mt-2 text-center">
-                {(() => {
-                  const enteredSum = finalPointInputs.reduce(
-                    (sum, item) => sum + (Number.parseInt(item.points, 10) || 0),
-                    0,
-                  )
-                  const difference = enteredSum - physicalPointsForFinalize
-
-                  if (difference === 0) {
-                    return <span className="text-green-400 font-bold text-lg">✓ Perfect Match (0)</span>
-                  } else if (difference > 0) {
-                    return <span className="text-red-400 font-bold text-lg">⚠️ Over by +{difference} points</span>
-                  } else {
-                    return <span className="text-yellow-400 font-bold text-lg">⚠️ Short by {difference} points</span>
-                  }
-                })()}
+              <div className="flex justify-end space-x-2 pt-2">
+                <Button type="button" variant="ghost" onClick={() => setIsCloseGameConfirmModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleConfirmCloseGameAction} variant="danger">
+                  Confirm Close Game
+                </Button>
               </div>
             </div>
+          </Modal>
 
-            {finalizeFormError && <p className="text-sm text-red-500">{finalizeFormError}</p>}
-          </div>
-          <div className="flex justify-end space-x-2 pt-4 mt-4 border-t border-border-default">
-            <Button type="button" variant="ghost" onClick={() => setIsFinalizeResultsModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleExecuteFinalizeGame}
-              variant="primary"
-              disabled={
-                (finalPointInputs.length === 0 && physicalPointsForFinalize !== 0) ||
-                (finalPointInputs.length > 0 &&
-                  finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0) !==
-                    physicalPointsForFinalize)
-              }
-            >
-              Confirm & Complete Game
-            </Button>
-          </div>
-        </div>
-      </Modal>
+          {/* Finalize Results Modal */}
+          <Modal
+            isOpen={isFinalizeResultsModalOpen}
+            onClose={() => setIsFinalizeResultsModalOpen(false)}
+            title="Record Final Game Standings"
+          >
+            <div>
+              <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+                <p className="text-text-secondary text-sm">
+                  Enter the final point count for each <strong className="text-yellow-300">active</strong> player.
+                  Players who already cashed out early are settled. The sum of these points must equal the total
+                  physical points remaining on the table.
+                </p>
+                <p className="text-sm text-text-secondary font-semibold">
+                  Total Physical Points on Table to Account For:{" "}
+                  <span className="text-white">{physicalPointsForFinalize}</span>
+                </p>
 
-      {/* Add Player Modal */}
-      <Modal
-        isOpen={isAddPlayerModalOpen}
-        onClose={() => {
-          setIsAddPlayerModalOpen(false)
-          setNewPlayerNameInModal("")
-          setFormError("")
-        }}
-        title="Add New Player to Game"
-      >
-        <div className="space-y-4">
-          <Input
-            label="Player Full Name"
-            id="newPlayerNameInModal"
-            type="text"
-            value={newPlayerNameInModal}
-            onChange={(e) => setNewPlayerNameInModal(e.target.value)}
-            placeholder="e.g., Alex Johnson"
-          />
-          <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
-            <p className="text-blue-200 text-sm">
-              <strong>Auto Buy-in:</strong> This player will automatically receive a{" "}
-              <span className="text-white font-semibold">{formatCurrency(session.standardBuyInAmount)}</span> buy-in (
-              <span className="text-white font-semibold">
-                {Math.floor(session.standardBuyInAmount / session.pointToCashRate)} points
-              </span>
-              ) when added to the game.
-            </p>
-          </div>
-
-          {formError && <p className="text-sm text-red-500">{formError}</p>}
-
-          <div className="flex justify-end space-x-2 pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setIsAddPlayerModalOpen(false)
-                setNewPlayerNameInModal("")
-                setFormError("")
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleAddPlayerToGame}
-              variant="primary"
-              disabled={!newPlayerNameInModal.trim() || session.status === "pending_close"}
-            >
-              Add Player with Buy-in
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Invite Friends to Game Modal */}
-      <Modal
-        isOpen={isInviteFriendsModalOpen}
-        onClose={() => {
-          setIsInviteFriendsModalOpen(false)
-          setSelectedFriendsToInvite([])
-          setInviteError("")
-          setInviteSuccess("")
-        }}
-        title="Invite Friends to Game"
-      >
-        <div className="space-y-4">
-          <p className="text-text-secondary text-sm">
-            Select friends to invite to this active game. They will receive an invitation notification and can join the
-            game.
-          </p>
-
-          {loadingFriends ? (
-            <p className="text-sm text-text-secondary">Loading friends...</p>
-          ) : getUninvitedFriends().length === 0 ? (
-            <div className="text-center py-4">
-              <p className="text-sm text-text-secondary mb-2">
-                {friends.length === 0
-                  ? "No friends available to invite. Add friends first!"
-                  : "All your friends have already been invited to this game."}
-              </p>
-            </div>
-          ) : (
-            <div className="max-h-48 overflow-y-auto space-y-2 border border-border-default rounded p-2">
-              {getUninvitedFriends().map((friendship) => (
-                <label
-                  key={friendship.friend_id}
-                  className="flex items-center space-x-2 cursor-pointer p-2 hover:bg-surface-input rounded"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFriendsToInvite.includes(friendship.friend_id)}
-                    onChange={() => handleFriendInviteToggle(friendship.friend_id)}
-                    className="rounded border-border-default"
-                  />
-                  <div className="flex items-center space-x-2">
-                    <div className="w-8 h-8 bg-brand-primary rounded-full flex items-center justify-center text-white text-xs font-bold">
-                      {friendship.friend_profile?.full_name?.charAt(0) ||
-                        friendship.friend_profile?.email?.charAt(0).toUpperCase() ||
-                        "?"}
+                {finalPointInputs.length > 0 ? (
+                  finalPointInputs.map((input) => (
+                    <div key={input.playerId} className="flex items-center justify-between">
+                      <label htmlFor={`final-points-${input.playerId}`} className="text-text-primary mr-2">
+                        <span className="text-white">{input.name}</span> (Active):
+                      </label>
+                      <Input
+                        id={`final-points-${input.playerId}`}
+                        type="number"
+                        value={input.points}
+                        onChange={(e) => handleFinalPointInputChange(input.playerId, e.target.value)}
+                        placeholder="Final Points"
+                        className="w-32"
+                        min="0"
+                      />
                     </div>
-                    <div>
-                      <span className="text-sm text-text-primary font-medium">
-                        {friendship.friend_profile?.full_name || "Unknown User"}
+                  ))
+                ) : (
+                  <p className="text-sm text-yellow-300">
+                    No active players remaining to finalize, or all points have been cashed out.
+                  </p>
+                )}
+
+                <div className="bg-slate-700 p-3 rounded-lg border">
+                  <p className="text-sm text-text-secondary font-semibold mb-2">Points Entered vs. Table Total:</p>
+                  <div className="flex justify-between items-center">
+                    <span className="text-text-secondary text-sm">
+                      Points Entered:{" "}
+                      <span className="text-white">
+                        {finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)}
                       </span>
-                      <p className="text-xs text-text-secondary">{friendship.friend_profile?.email}</p>
-                    </div>
+                    </span>
+                    <span className="text-text-secondary text-sm">
+                      Table Total: <span className="text-white">{physicalPointsForFinalize}</span>
+                    </span>
                   </div>
-                </label>
-              ))}
+                  <div className="mt-2 text-center">
+                    {(() => {
+                      const enteredSum = finalPointInputs.reduce(
+                        (sum, item) => sum + (Number.parseInt(item.points, 10) || 0),
+                        0,
+                      )
+                      const difference = enteredSum - physicalPointsForFinalize
+
+                      if (difference === 0) {
+                        return <span className="text-green-400 font-bold text-lg">✓ Perfect Match (0)</span>
+                      } else if (difference > 0) {
+                        return <span className="text-red-400 font-bold text-lg">⚠️ Over by +{difference} points</span>
+                      } else {
+                        return <span className="text-yellow-400 font-bold text-lg">⚠️ Short by {difference} points</span>
+                      }
+                    })()}
+                  </div>
+                </div>
+
+                {finalizeFormError && <p className="text-sm text-red-500">{finalizeFormError}</p>}
+              </div>
+              <div className="flex justify-end space-x-2 pt-4 mt-4 border-t border-border-default">
+                <Button type="button" variant="ghost" onClick={() => setIsFinalizeResultsModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleExecuteFinalizeGame}
+                  variant="primary"
+                  disabled={
+                    (finalPointInputs.length === 0 && physicalPointsForFinalize !== 0) ||
+                    (finalPointInputs.length > 0 &&
+                      finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0) !==
+                        physicalPointsForFinalize)
+                  }
+                >
+                  Confirm & Complete Game
+                </Button>
+              </div>
             </div>
-          )}
+          </Modal>
 
-          {selectedFriendsToInvite.length > 0 && (
-            <p className="text-sm text-blue-400">
-              {selectedFriendsToInvite.length} friend{selectedFriendsToInvite.length > 1 ? "s" : ""} selected to invite
-            </p>
-          )}
+          {/* Add Player Modal */}
+          <Modal
+            isOpen={isAddPlayerModalOpen}
+            onClose={() => {
+              setIsAddPlayerModalOpen(false)
+              setNewPlayerNameInModal("")
+              setFormError("")
+            }}
+            title="Add New Player to Game"
+          >
+            <div className="space-y-4">
+              <Input
+                label="Player Full Name"
+                id="newPlayerNameInModal"
+                type="text"
+                value={newPlayerNameInModal}
+                onChange={(e) => setNewPlayerNameInModal(e.target.value)}
+                placeholder="e.g., Alex Johnson"
+              />
+              <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
+                <p className="text-blue-200 text-sm">
+                  <strong>Auto Buy-in:</strong> This player will automatically receive a{" "}
+                  <span className="text-white font-semibold">{formatCurrency(session.standardBuyInAmount)}</span> buy-in
+                  (
+                  <span className="text-white font-semibold">
+                    {Math.floor(session.standardBuyInAmount / session.pointToCashRate)} points
+                  </span>
+                  ) when added to the game.
+                </p>
+              </div>
 
-          {inviteError && <p className="text-sm text-red-500">{inviteError}</p>}
-          {inviteSuccess && <p className="text-sm text-green-400">{inviteSuccess}</p>}
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
 
-          <div className="flex justify-end space-x-2 pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setIsInviteFriendsModalOpen(false)
-                setSelectedFriendsToInvite([])
-                setInviteError("")
-                setInviteSuccess("")
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleInviteFriendsToGame}
-              variant="primary"
-              disabled={inviteLoading || selectedFriendsToInvite.length === 0}
-            >
-              {inviteLoading ? "Sending..." : `Send Invitation${selectedFriendsToInvite.length > 1 ? "s" : ""}`}
-            </Button>
-          </div>
-        </div>
-      </Modal>
+              <div className="flex justify-end space-x-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsAddPlayerModalOpen(false)
+                    setNewPlayerNameInModal("")
+                    setFormError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleAddPlayerToGame}
+                  variant="primary"
+                  disabled={!newPlayerNameInModal.trim() || session.status === "pending_close"}
+                >
+                  Add Player with Buy-in
+                </Button>
+              </div>
+            </div>
+          </Modal>
 
-      {/* Buy-in Modal */}
-      <Modal
-        isOpen={isBuyInModalOpen}
-        onClose={() => setIsBuyInModalOpen(false)}
-        title={`Buy-in for ${session.playersInGame.find((p) => p.playerId === buyInPlayerId)?.name || ""}`}
-      >
-        <div className="space-y-4">
-          <Input
-            label="Buy-in Amount (Cash)"
-            id="buyInAmount"
-            type="number"
-            value={buyInAmount}
-            onChange={(e) => setBuyInAmount(Number.parseFloat(e.target.value))}
-            min="0.01"
-            step="0.01"
-            disabled={session.status === "pending_close"}
-          />
-          <p className="text-sm text-text-secondary">
-            Player will receive{" "}
-            <span className="text-white">
-              {buyInAmount > 0 && session.pointToCashRate > 0 ? Math.floor(buyInAmount / session.pointToCashRate) : 0}
-            </span>{" "}
-            points.
-          </p>
-          {formError && <p className="text-sm text-red-500">{formError}</p>}
-          <div className="flex justify-end space-x-2">
-            <Button type="button" variant="ghost" onClick={() => setIsBuyInModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleBuyIn}
-              variant="primary"
-              disabled={buyInAmount <= 0 || session.status === "pending_close"}
-            >
-              Confirm Buy-in
-            </Button>
-          </div>
-        </div>
-      </Modal>
+          {/* Invite Friends to Game Modal */}
+          <Modal
+            isOpen={isInviteFriendsModalOpen}
+            onClose={() => {
+              setIsInviteFriendsModalOpen(false)
+              setSelectedFriendsToInvite([])
+              setInviteError("")
+              setInviteSuccess("")
+            }}
+            title="Invite Friends to Game"
+          >
+            <div className="space-y-4">
+              <p className="text-text-secondary text-sm">
+                Select friends to invite to this active game. They will receive an invitation notification and can join
+                the game.
+              </p>
 
-      {/* Edit Buy-in Modal */}
-      <Modal
-        isOpen={isEditBuyInModalOpen}
-        onClose={() => {
-          setIsEditBuyInModalOpen(false)
-          setEditingBuyIn(null)
-          setFormError("")
-        }}
-        title="Edit Buy-in"
-      >
-        <div className="space-y-4">
-          <Input
-            label="Buy-in Amount (Cash)"
-            id="editBuyInAmount"
-            type="number"
-            value={editBuyInAmount}
-            onChange={(e) => setEditBuyInAmount(Number.parseFloat(e.target.value))}
-            min="0.01"
-            step="0.01"
-          />
-          <p className="text-sm text-text-secondary">
-            Player will have{" "}
-            <span className="text-white">
-              {editBuyInAmount > 0 && session.pointToCashRate > 0
-                ? Math.floor(editBuyInAmount / session.pointToCashRate)
-                : 0}
-            </span>{" "}
-            points from this buy-in.
-          </p>
-          {formError && <p className="text-sm text-red-500">{formError}</p>}
-          <div className="flex justify-end space-x-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setIsEditBuyInModalOpen(false)
-                setEditingBuyIn(null)
-                setFormError("")
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleEditBuyIn} variant="primary" disabled={editBuyInAmount <= 0}>
-              Save Changes
-            </Button>
-          </div>
-        </div>
-      </Modal>
+              {loadingFriends ? (
+                <p className="text-sm text-text-secondary">Loading friends...</p>
+              ) : getUninvitedFriends().length === 0 ? (
+                <div className="text-center py-4">
+                  <p className="text-sm text-text-secondary mb-2">
+                    {friends.length === 0
+                      ? "No friends available to invite. Add friends first!"
+                      : "All your friends have already been invited to this game."}
+                  </p>
+                </div>
+              ) : (
+                <div className="max-h-48 overflow-y-auto space-y-2 border border-border-default rounded p-2">
+                  {getUninvitedFriends().map((friendship) => (
+                    <label
+                      key={friendship.friend_id}
+                      className="flex items-center space-x-2 cursor-pointer p-2 hover:bg-surface-input rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedFriendsToInvite.includes(friendship.friend_id)}
+                        onChange={() => handleFriendInviteToggle(friendship.friend_id)}
+                        className="rounded border-border-default"
+                      />
+                      <div className="flex items-center space-x-2">
+                        <div className="w-8 h-8 bg-brand-primary rounded-full flex items-center justify-center text-white text-xs font-bold">
+                          {friendship.friend_profile?.full_name?.charAt(0) ||
+                            friendship.friend_profile?.email?.charAt(0).toUpperCase() ||
+                            "?"}
+                        </div>
+                        <div>
+                          <span className="text-sm text-text-primary font-medium">
+                            {friendship.friend_profile?.full_name || "Unknown User"}
+                          </span>
+                          <p className="text-xs text-text-secondary">{friendship.friend_profile?.email}</p>
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
 
-      {/* Delete Buy-in Modal */}
-      <Modal
-        isOpen={isDeleteBuyInModalOpen}
-        onClose={() => {
-          setIsDeleteBuyInModalOpen(false)
-          setDeletingBuyIn(null)
-          setFormError("")
-        }}
-        title="Delete Buy-in"
-      >
-        <div className="space-y-4">
-          <p className="text-text-secondary">
-            Are you sure you want to delete this buy-in of{" "}
-            <span className="text-white font-semibold">{formatCurrency(deletingBuyIn?.amount || 0)}</span>?
-          </p>
-          <p className="text-sm text-yellow-300">
-            This will remove{" "}
-            <span className="text-white font-semibold">
-              {deletingBuyIn ? Math.floor(deletingBuyIn.amount / session.pointToCashRate) : 0} points
-            </span>{" "}
-            from the player's stack and cannot be undone.
-          </p>
-          {formError && <p className="text-sm text-red-500">{formError}</p>}
-          <div className="flex justify-end space-x-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setIsDeleteBuyInModalOpen(false)
-                setDeletingBuyIn(null)
-                setFormError("")
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleDeleteBuyIn} variant="danger">
-              Delete Buy-in
-            </Button>
-          </div>
-        </div>
-      </Modal>
+              {selectedFriendsToInvite.length > 0 && (
+                <p className="text-sm text-blue-400">
+                  {selectedFriendsToInvite.length} friend{selectedFriendsToInvite.length > 1 ? "s" : ""} selected to
+                  invite
+                </p>
+              )}
 
-      {/* Cash Out Modal */}
-      <Modal
-        isOpen={isCashOutModalOpen}
-        onClose={() => setIsCashOutModalOpen(false)}
-        title={`Cash out & Leave for ${session.playersInGame.find((p) => p.playerId === cashOutPlayerId)?.name || ""}`}
-      >
-        <div className="space-y-4">
-          <Input
-            label="Point Amount to Cash Out from Table"
-            id="cashOutPointAmount"
-            type="number"
-            value={cashOutPointAmount}
-            onChange={(e) =>
-              setCashOutPointAmount(e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10) || 0)
-            }
-            min="0"
-            step="1"
-            max={session.currentPhysicalPointsOnTable}
-          />
-          <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
-            <p className="text-blue-200 text-sm">
-              <strong>Cash Out Rules:</strong> Players can cash out any amount from 0 to{" "}
-              <span className="text-white font-semibold">{session.currentPhysicalPointsOnTable} points</span> (total
-              points on table). Enter 0 if the player is leaving with no money.
-            </p>
-          </div>
-          <p className="text-sm text-text-secondary">
-            This player will receive:{" "}
-            <span className="text-white font-semibold">
-              {formatCurrency(cashOutPointAmount * session.pointToCashRate)}
-            </span>{" "}
-            and will be marked as 'Cashed Out Early'.
-            {cashOutPointAmount === 0 && (
-              <span className="block text-yellow-300 mt-1">
-                <strong>Note:</strong> Player is leaving with $0.00 (busted out).
-              </span>
-            )}
-          </p>
-          {formError && <p className="text-sm text-red-500">{formError}</p>}
-          <div className="flex justify-end space-x-2">
-            <Button type="button" variant="ghost" onClick={() => setIsCashOutModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCashOut}
-              variant="primary"
-              disabled={cashOutPointAmount < 0 || cashOutPointAmount > session.currentPhysicalPointsOnTable}
-            >
-              Confirm Cash Out & Player Leaves
-            </Button>
-          </div>
-        </div>
-      </Modal>
+              {inviteError && <p className="text-sm text-red-500">{inviteError}</p>}
+              {inviteSuccess && <p className="text-sm text-green-400">{inviteSuccess}</p>}
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsInviteFriendsModalOpen(false)
+                    setSelectedFriendsToInvite([])
+                    setInviteError("")
+                    setInviteSuccess("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleInviteFriendsToGame}
+                  variant="primary"
+                  disabled={inviteLoading || selectedFriendsToInvite.length === 0}
+                >
+                  {inviteLoading ? "Sending..." : `Send Invitation${selectedFriendsToInvite.length > 1 ? "s" : ""}`}
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Buy-in Modal */}
+          <Modal
+            isOpen={isBuyInModalOpen}
+            onClose={() => setIsBuyInModalOpen(false)}
+            title={`Buy-in for ${session.playersInGame.find((p) => p.playerId === buyInPlayerId)?.name || ""}`}
+          >
+            <div className="space-y-4">
+              <Input
+                label="Buy-in Amount (Cash)"
+                id="buyInAmount"
+                type="number"
+                value={buyInAmount}
+                onChange={(e) => setBuyInAmount(Number.parseFloat(e.target.value))}
+                min="0.01"
+                step="0.01"
+                disabled={session.status === "pending_close"}
+              />
+              <p className="text-sm text-text-secondary">
+                Player will receive{" "}
+                <span className="text-white">
+                  {buyInAmount > 0 && session.pointToCashRate > 0
+                    ? Math.floor(buyInAmount / session.pointToCashRate)
+                    : 0}
+                </span>{" "}
+                points.
+              </p>
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2">
+                <Button type="button" variant="ghost" onClick={() => setIsBuyInModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleBuyIn}
+                  variant="primary"
+                  disabled={buyInAmount <= 0 || session.status === "pending_close"}
+                >
+                  Confirm Buy-in
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Edit Buy-in Modal */}
+          <Modal
+            isOpen={isEditBuyInModalOpen}
+            onClose={() => {
+              setIsEditBuyInModalOpen(false)
+              setEditingBuyIn(null)
+              setFormError("")
+            }}
+            title="Edit Buy-in"
+          >
+            <div className="space-y-4">
+              <Input
+                label="Buy-in Amount (Cash)"
+                id="editBuyInAmount"
+                type="number"
+                value={editBuyInAmount}
+                onChange={(e) => setEditBuyInAmount(Number.parseFloat(e.target.value))}
+                min="0.01"
+                step="0.01"
+              />
+              <p className="text-sm text-text-secondary">
+                Player will have{" "}
+                <span className="text-white">
+                  {editBuyInAmount > 0 && session.pointToCashRate > 0
+                    ? Math.floor(editBuyInAmount / session.pointToCashRate)
+                    : 0}
+                </span>{" "}
+                points from this buy-in.
+              </p>
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsEditBuyInModalOpen(false)
+                    setEditingBuyIn(null)
+                    setFormError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleEditBuyIn} variant="primary" disabled={editBuyInAmount <= 0}>
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Delete Buy-in Modal */}
+          <Modal
+            isOpen={isDeleteBuyInModalOpen}
+            onClose={() => {
+              setIsDeleteBuyInModalOpen(false)
+              setDeletingBuyIn(null)
+              setFormError("")
+            }}
+            title="Delete Buy-in"
+          >
+            <div className="space-y-4">
+              <p className="text-text-secondary">
+                Are you sure you want to delete this buy-in of{" "}
+                <span className="text-white font-semibold">{formatCurrency(deletingBuyIn?.amount || 0)}</span>?
+              </p>
+              <p className="text-sm text-yellow-300">
+                This will remove{" "}
+                <span className="text-white font-semibold">
+                  {deletingBuyIn ? Math.floor(deletingBuyIn.amount / session.pointToCashRate) : 0} points
+                </span>{" "}
+                from the player's stack and cannot be undone.
+              </p>
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsDeleteBuyInModalOpen(false)
+                    setDeletingBuyIn(null)
+                    setFormError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleDeleteBuyIn} variant="danger">
+                  Delete Buy-in
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Cash Out Modal */}
+          <Modal
+            isOpen={isCashOutModalOpen}
+            onClose={() => setIsCashOutModalOpen(false)}
+            title={`Cash out & Leave for ${session.playersInGame.find((p) => p.playerId === cashOutPlayerId)?.name || ""}`}
+          >
+            <div className="space-y-4">
+              <Input
+                label="Point Amount to Cash Out from Table"
+                id="cashOutPointAmount"
+                type="number"
+                value={cashOutPointAmount}
+                onChange={(e) =>
+                  setCashOutPointAmount(e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10) || 0)
+                }
+                min="0"
+                step="1"
+                max={session.currentPhysicalPointsOnTable}
+              />
+              <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
+                <p className="text-blue-200 text-sm">
+                  <strong>Cash Out Rules:</strong> Players can cash out any amount from 0 to{" "}
+                  <span className="text-white font-semibold">{session.currentPhysicalPointsOnTable} points</span> (total
+                  points on table). Enter 0 if the player is leaving with no money.
+                </p>
+              </div>
+              <p className="text-sm text-text-secondary">
+                This player will receive:{" "}
+                <span className="text-white font-semibold">
+                  {formatCurrency(cashOutPointAmount * session.pointToCashRate)}
+                </span>{" "}
+                and will be marked as 'Cashed Out Early'.
+                {cashOutPointAmount === 0 && (
+                  <span className="block text-yellow-300 mt-1">
+                    <strong>Note:</strong> Player is leaving with $0.00 (busted out).
+                  </span>
+                )}
+              </p>
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2">
+                <Button type="button" variant="ghost" onClick={() => setIsCashOutModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleCashOut}
+                  variant="primary"
+                  disabled={cashOutPointAmount < 0 || cashOutPointAmount > session.currentPhysicalPointsOnTable}
+                >
+                  Confirm Cash Out & Player Leaves
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        </>
+      )}
     </div>
   )
 }

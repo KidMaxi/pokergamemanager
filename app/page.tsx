@@ -288,6 +288,12 @@ export default function Home() {
     try {
       console.log("Updating session in database:", session.id, session.status)
 
+      // Only allow updates if user is the owner
+      if (session.isOwner === false) {
+        console.error("User is not the owner of this game, cannot update")
+        throw new Error("You don't have permission to update this game")
+      }
+
       // Prepare the update data
       const updateData: any = {
         name: session.name,
@@ -445,6 +451,13 @@ export default function Home() {
 
   const handleUpdateSession = async (updatedSession: GameSession) => {
     try {
+      // Only allow updates if user is the owner
+      if (updatedSession.isOwner === false) {
+        console.error("User is not the owner of this game, cannot update")
+        alert("You don't have permission to modify this game.")
+        return
+      }
+
       // Update database first
       await updateGameSessionInDatabase(updatedSession)
 
@@ -455,7 +468,13 @@ export default function Home() {
     } catch (error) {
       console.error("Error updating session:", error)
 
-      // Still update local state even if database update fails
+      // Don't update local state if database update fails for non-owners
+      if (updatedSession.isOwner === false) {
+        alert("Failed to update game. You may not have permission to modify this game.")
+        return
+      }
+
+      // Still update local state for owners even if database update fails
       setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
 
       // Show user a warning but don't block the action
