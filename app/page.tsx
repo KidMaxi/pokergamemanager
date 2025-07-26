@@ -247,6 +247,8 @@ export default function Home() {
 
   const updateGameSessionInDatabase = async (session: GameSession) => {
     try {
+      console.log("Updating session in database:", session.id, session.status)
+
       // Prepare the update data
       const updateData: any = {
         name: session.name,
@@ -270,7 +272,12 @@ export default function Home() {
         .eq("id", session.id)
         .eq("user_id", user!.id)
 
-      if (error) throw error
+      if (error) {
+        console.error("Database update error:", error)
+        throw error
+      }
+
+      console.log("Session updated successfully in database")
     } catch (error) {
       console.error("Error updating session:", error)
       throw error
@@ -399,11 +406,21 @@ export default function Home() {
 
   const handleUpdateSession = async (updatedSession: GameSession) => {
     try {
+      // Update database first
       await updateGameSessionInDatabase(updatedSession)
+
+      // Then update local state
       setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
+
+      console.log("Session updated successfully")
     } catch (error) {
       console.error("Error updating session:", error)
+
+      // Still update local state even if database update fails
       setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
+
+      // Show user a warning but don't block the action
+      console.warn("Session updated locally but may not be saved to database")
     }
   }
 
@@ -434,16 +451,26 @@ export default function Home() {
 
   const handleDeleteGame = async (sessionId: string) => {
     try {
+      // Delete from database first
       const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
 
-      if (error) throw error
+      if (error) {
+        console.error("Database delete error:", error)
+        throw error
+      }
 
+      // Update local state
       setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
+
+      // If this was the active game, navigate back to dashboard
       if (activeGameId === sessionId) {
         setActiveGameId(null)
         setCurrentView("dashboard")
       }
+
+      console.log("Game deleted successfully")
     } catch (error) {
+      console.error("Error deleting game:", error)
       alert("Failed to delete game. Please try again.")
     }
   }

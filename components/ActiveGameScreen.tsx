@@ -581,9 +581,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const handleInitiateCloseGame = () => {
+    // Close any open modals first
     setIsAddPlayerModalOpen(false)
     setIsBuyInModalOpen(false)
     setIsCashOutModalOpen(false)
+    setIsEditBuyInModalOpen(false)
+    setIsDeleteBuyInModalOpen(false)
     setFormError("")
     setIsCloseGameConfirmModalOpen(true)
   }

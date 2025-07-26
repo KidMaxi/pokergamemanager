@@ -10,7 +10,6 @@ import Modal from "./common/Modal"
 import Card from "./common/Card"
 import LiveTimer from "./common/LiveTimer"
 import { useAuth } from "../contexts/AuthContext"
-import { acceptGameInvitation, declineGameInvitation } from "../actions/game-invitations"
 import { supabase } from "../lib/supabase"
 
 interface GameDashboardProps {
@@ -122,44 +121,73 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
 
 interface GameInvitationCardProps {
   invitation: GameInvitation
+  onInvitationHandled: () => void
 }
 
-const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation }) => {
+const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onInvitationHandled }) => {
+  const { user } = useAuth()
   const [acceptLoading, setAcceptLoading] = useState(false)
   const [declineLoading, setDeclineLoading] = useState(false)
   const [error, setError] = useState("")
 
   const handleAccept = async () => {
+    if (!user) return
+
     setAcceptLoading(true)
     setError("")
 
     try {
-      const result = await acceptGameInvitation(invitation.id)
-      if (result.error) {
-        setError(result.error)
+      // Update the invitation status to accepted
+      const { error: updateError } = await supabase
+        .from("game_invitations")
+        .update({
+          status: "accepted",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", invitation.id)
+        .eq("invitee_id", user.id)
+
+      if (updateError) {
+        throw updateError
       }
-      // If successful, the action will redirect
-    } catch (error) {
-      setError("Failed to accept invitation")
+
+      // Refresh the page to show the updated game
+      onInvitationHandled()
+      window.location.reload()
+    } catch (error: any) {
+      console.error("Error accepting invitation:", error)
+      setError("Failed to accept invitation. Please try again.")
     } finally {
       setAcceptLoading(false)
     }
   }
 
   const handleDecline = async () => {
+    if (!user) return
+
     setDeclineLoading(true)
     setError("")
 
     try {
-      const result = await declineGameInvitation(invitation.id)
-      if (result.error) {
-        setError(result.error)
-      } else {
-        // Refresh the page or update state to remove the invitation
-        window.location.reload()
+      // Update the invitation status to declined
+      const { error: updateError } = await supabase
+        .from("game_invitations")
+        .update({
+          status: "declined",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", invitation.id)
+        .eq("invitee_id", user.id)
+
+      if (updateError) {
+        throw updateError
       }
-    } catch (error) {
-      setError("Failed to decline invitation")
+
+      // Remove the invitation from the UI
+      onInvitationHandled()
+    } catch (error: any) {
+      console.error("Error declining invitation:", error)
+      setError("Failed to decline invitation. Please try again.")
     } finally {
       setDeclineLoading(false)
     }
@@ -217,37 +245,45 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
   )
 
   const [pendingInvitations, setPendingInvitations] = useState<GameInvitation[]>([])
+  const [loadingInvitations, setLoadingInvitations] = useState(true)
 
-  useEffect(() => {
-    const fetchPendingInvitations = async () => {
-      if (!user) return
+  const fetchPendingInvitations = async () => {
+    if (!user) return
 
-      try {
-        const { data, error } = await supabase
-          .from("game_invitations")
-          .select(`
+    try {
+      setLoadingInvitations(true)
+      const { data, error } = await supabase
+        .from("game_invitations")
+        .select(`
           *,
           game_session:game_sessions(name, start_time, status),
           inviter_profile:profiles!game_invitations_inviter_id_fkey(full_name, email)
         `)
-          .eq("invitee_id", user.id)
-          .eq("status", "pending")
+        .eq("invitee_id", user.id)
+        .eq("status", "pending")
 
-        if (error) {
-          console.error("Error fetching pending invitations:", error)
-          // If the table doesn't exist yet, just set empty array
-          setPendingInvitations([])
-        } else {
-          setPendingInvitations(data || [])
-        }
-      } catch (error) {
-        console.error("Game invitations feature not available yet:", error)
+      if (error) {
+        console.error("Error fetching pending invitations:", error)
         setPendingInvitations([])
+      } else {
+        setPendingInvitations(data || [])
       }
+    } catch (error) {
+      console.error("Game invitations feature not available yet:", error)
+      setPendingInvitations([])
+    } finally {
+      setLoadingInvitations(false)
     }
+  }
 
+  useEffect(() => {
     fetchPendingInvitations()
   }, [user])
+
+  const handleInvitationHandled = () => {
+    // Refresh invitations after handling one
+    fetchPendingInvitations()
+  }
 
   const loadFriends = async () => {
     if (!user) return
@@ -381,11 +417,15 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         Start New Game
       </Button>
 
-      {pendingInvitations.length > 0 && (
+      {!loadingInvitations && pendingInvitations.length > 0 && (
         <section className="mb-8">
           <h3 className="text-2xl font-semibold text-blue-400 mb-4">Game Invitations</h3>
           {pendingInvitations.map((invitation) => (
-            <GameInvitationCard key={invitation.id} invitation={invitation} />
+            <GameInvitationCard
+              key={invitation.id}
+              invitation={invitation}
+              onInvitationHandled={handleInvitationHandled}
+            />
           ))}
         </section>
       )}
