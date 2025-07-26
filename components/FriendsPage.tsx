@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
 import type { FriendRequest, Friendship } from "../types"
@@ -24,131 +24,137 @@ const FriendsPage: React.FC = () => {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
-  useEffect(() => {
-    if (user) {
-      loadFriendsData()
+  const loadFriendsData = useCallback(async () => {
+    if (!user) {
+      setLoading(false)
+      return
     }
-  }, [user])
-
-  const loadFriendsData = async () => {
-    if (!user) return
 
     try {
       setLoading(true)
+      setError("")
       console.log("Loading friends data...")
 
-      // Test if tables exist
-      const { data: testData, error: testError } = await supabase.from("friendships").select("id").limit(1)
-
-      if (testError) {
-        console.error("Tables may not exist:", testError)
-        setError("Friends system not set up. Please run the database setup script.")
-        return
-      }
-
-      // Load friends with profile data
-      const { data: friendsData, error: friendsError } = await supabase
-        .from("friendships")
-        .select("*")
-        .eq("user_id", user.id)
-
-      if (friendsError) {
-        console.error("Error loading friends:", friendsError)
-        throw friendsError
-      }
-
-      // Get friend profiles
-      const friendIds = friendsData?.map((f) => f.friend_id) || []
+      // Initialize arrays
       let friendsWithProfiles: Friendship[] = []
+      let sentWithProfiles: FriendRequest[] = []
+      let receivedWithProfiles: FriendRequest[] = []
 
-      if (friendIds.length > 0) {
-        const { data: profilesData, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id, full_name, email, all_time_profit_loss, games_played")
-          .in("id", friendIds)
+      try {
+        // Load friends with profile data
+        const { data: friendsData, error: friendsError } = await supabase
+          .from("friendships")
+          .select("*")
+          .eq("user_id", user.id)
 
-        if (profilesError) {
-          console.error("Error loading friend profiles:", profilesError)
-        } else {
-          friendsWithProfiles = friendsData.map((friendship) => ({
-            ...friendship,
-            friend_profile: profilesData.find((p) => p.id === friendship.friend_id),
-          }))
+        if (friendsError) {
+          console.error("Error loading friends:", friendsError)
+          // Don't throw here, just log and continue
+        } else if (friendsData && friendsData.length > 0) {
+          // Get friend profiles
+          const friendIds = friendsData.map((f) => f.friend_id)
+
+          const { data: profilesData, error: profilesError } = await supabase
+            .from("profiles")
+            .select("id, full_name, email, all_time_profit_loss, games_played")
+            .in("id", friendIds)
+
+          if (!profilesError && profilesData) {
+            friendsWithProfiles = friendsData.map((friendship) => ({
+              ...friendship,
+              friend_profile: profilesData.find((p) => p.id === friendship.friend_id),
+            }))
+          }
         }
+      } catch (err) {
+        console.error("Error in friends loading:", err)
       }
 
-      setFriends(friendsWithProfiles)
+      try {
+        // Load sent requests (only pending ones)
+        const { data: sentData, error: sentError } = await supabase
+          .from("friend_requests")
+          .select("*")
+          .eq("sender_id", user.id)
+          .eq("status", "pending")
 
-      // Load sent requests (only pending ones)
-      const { data: sentData, error: sentError } = await supabase
-        .from("friend_requests")
-        .select("*")
-        .eq("sender_id", user.id)
-        .eq("status", "pending")
+        if (!sentError && sentData && sentData.length > 0) {
+          // Get receiver profiles for sent requests
+          const receiverIds = sentData.map((r) => r.receiver_id)
 
-      if (sentError) {
-        console.error("Error loading sent requests:", sentError)
-      } else {
-        // Get receiver profiles for sent requests
-        const receiverIds = sentData?.map((r) => r.receiver_id) || []
-        let sentWithProfiles: FriendRequest[] = []
-
-        if (receiverIds.length > 0) {
           const { data: receiverProfiles, error: receiverError } = await supabase
             .from("profiles")
             .select("id, full_name, email")
             .in("id", receiverIds)
 
-          if (!receiverError) {
+          if (!receiverError && receiverProfiles) {
             sentWithProfiles = sentData.map((request) => ({
               ...request,
               receiver_profile: receiverProfiles.find((p) => p.id === request.receiver_id),
             }))
           }
         }
-
-        setSentRequests(sentWithProfiles)
+      } catch (err) {
+        console.error("Error in sent requests loading:", err)
       }
 
-      // Load received requests (only pending ones)
-      const { data: receivedData, error: receivedError } = await supabase
-        .from("friend_requests")
-        .select("*")
-        .eq("receiver_id", user.id)
-        .eq("status", "pending")
+      try {
+        // Load received requests (only pending ones)
+        const { data: receivedData, error: receivedError } = await supabase
+          .from("friend_requests")
+          .select("*")
+          .eq("receiver_id", user.id)
+          .eq("status", "pending")
 
-      if (receivedError) {
-        console.error("Error loading received requests:", receivedError)
-      } else {
-        // Get sender profiles for received requests
-        const senderIds = receivedData?.map((r) => r.sender_id) || []
-        let receivedWithProfiles: FriendRequest[] = []
+        if (!receivedError && receivedData && receivedData.length > 0) {
+          // Get sender profiles for received requests
+          const senderIds = receivedData.map((r) => r.sender_id)
 
-        if (senderIds.length > 0) {
           const { data: senderProfiles, error: senderError } = await supabase
             .from("profiles")
             .select("id, full_name, email")
             .in("id", senderIds)
 
-          if (!senderError) {
+          if (!senderError && senderProfiles) {
             receivedWithProfiles = receivedData.map((request) => ({
               ...request,
               sender_profile: senderProfiles.find((p) => p.id === request.sender_id),
             }))
           }
         }
-
-        setReceivedRequests(receivedWithProfiles)
+      } catch (err) {
+        console.error("Error in received requests loading:", err)
       }
+
+      // Update state with loaded data
+      setFriends(friendsWithProfiles)
+      setSentRequests(sentWithProfiles)
+      setReceivedRequests(receivedWithProfiles)
 
       console.log("Friends data loaded successfully")
     } catch (error) {
       console.error("Error in loadFriendsData:", error)
-      setError("Failed to load friends data")
+      setError("Failed to load friends data. Please try refreshing the page.")
     } finally {
       setLoading(false)
     }
-  }
+  }, [user])
+
+  useEffect(() => {
+    let mounted = true
+
+    const loadData = async () => {
+      if (user && mounted) {
+        await loadFriendsData()
+      }
+    }
+
+    loadData()
+
+    return () => {
+      mounted = false
+    }
+  }, [user, loadFriendsData])
 
   const handleSendFriendRequest = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -228,6 +234,7 @@ const FriendsPage: React.FC = () => {
 
   const handleAcceptRequest = async (requestId: string) => {
     try {
+      setError("")
       const { error } = await supabase.rpc("accept_friend_request", {
         request_id: requestId,
       })
@@ -246,6 +253,7 @@ const FriendsPage: React.FC = () => {
 
   const handleDeclineRequest = async (requestId: string) => {
     try {
+      setError("")
       const { error } = await supabase
         .from("friend_requests")
         .update({ status: "declined", updated_at: new Date().toISOString() })
@@ -267,6 +275,7 @@ const FriendsPage: React.FC = () => {
     if (!confirm("Are you sure you want to remove this friend?")) return
 
     try {
+      setError("")
       const { error } = await supabase.rpc("remove_friendship", {
         friend_user_id: friendId,
       })
@@ -285,6 +294,7 @@ const FriendsPage: React.FC = () => {
 
   const handleCancelRequest = async (requestId: string) => {
     try {
+      setError("")
       const { error } = await supabase.from("friend_requests").delete().eq("id", requestId)
 
       if (error) {
@@ -299,12 +309,20 @@ const FriendsPage: React.FC = () => {
     }
   }
 
+  const handleRetry = () => {
+    setError("")
+    loadFriendsData()
+  }
+
   if (loading) {
     return (
       <div className="container mx-auto px-4 py-8">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
           <p className="text-text-secondary">Loading friends...</p>
+          <Button onClick={handleRetry} variant="ghost" className="mt-4 text-sm">
+            Taking too long? Click to retry
+          </Button>
         </div>
       </div>
     )
@@ -324,7 +342,12 @@ const FriendsPage: React.FC = () => {
 
         {/* Status Messages */}
         {error && (
-          <div className="mb-4 p-3 bg-red-900/20 border border-red-800 rounded-lg text-red-400 text-sm">{error}</div>
+          <div className="mb-4 p-3 bg-red-900/20 border border-red-800 rounded-lg text-red-400 text-sm flex justify-between items-center">
+            <span>{error}</span>
+            <Button onClick={handleRetry} variant="ghost" size="sm" className="text-red-400 hover:text-red-300">
+              Retry
+            </Button>
+          </div>
         )}
         {success && (
           <div className="mb-4 p-3 bg-green-900/20 border border-green-800 rounded-lg text-green-400 text-sm">
@@ -390,7 +413,9 @@ const FriendsPage: React.FC = () => {
                             P/L:{" "}
                             <span
                               className={
-                                friendship.friend_profile?.all_time_profit_loss >= 0 ? "text-green-400" : "text-red-400"
+                                (friendship.friend_profile?.all_time_profit_loss || 0) >= 0
+                                  ? "text-green-400"
+                                  : "text-red-400"
                               }
                             >
                               {formatCurrency(friendship.friend_profile?.all_time_profit_loss || 0)}
