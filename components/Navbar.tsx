@@ -50,9 +50,23 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             games_played: data.games_played || 0,
             last_game_date: data.last_game_date,
           })
+        } else if (error) {
+          console.error("Error loading profile:", error)
+          // Set default stats if profile doesn't exist yet
+          setUserStats({
+            all_time_profit_loss: 0,
+            games_played: 0,
+            last_game_date: null,
+          })
         }
       } catch (err) {
         console.error("Error loading profile:", err)
+        // Set default stats on error
+        setUserStats({
+          all_time_profit_loss: 0,
+          games_played: 0,
+          last_game_date: null,
+        })
       }
     }
     setIsProfileModalOpen(true)
@@ -229,41 +243,39 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             </p>
           </div>
 
-          {/* All-Time Stats */}
-          {userStats && (
-            <Card className="bg-gradient-to-r from-slate-800 to-slate-700 border-2 border-brand-primary">
-              <h3 className="text-lg font-semibold text-brand-primary mb-4 flex items-center">
-                <span className="mr-2">📊</span>
-                All-Time Poker Stats
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="text-center p-3 bg-slate-800 rounded-lg">
-                  <div className={`text-2xl font-bold ${getStatsColor(userStats.all_time_profit_loss)}`}>
-                    {formatCurrency(userStats.all_time_profit_loss)}
-                  </div>
-                  <div className="text-text-secondary text-sm">Total P/L</div>
+          {/* All-Time Stats - Always show, even with zero values */}
+          <Card className="bg-gradient-to-r from-slate-800 to-slate-700 border-2 border-brand-primary">
+            <h3 className="text-lg font-semibold text-brand-primary mb-4 flex items-center">
+              <span className="mr-2">📊</span>
+              All-Time Poker Stats
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="text-center p-3 bg-slate-800 rounded-lg">
+                <div className={`text-2xl font-bold ${getStatsColor(userStats?.all_time_profit_loss || 0)}`}>
+                  {formatCurrency(userStats?.all_time_profit_loss || 0)}
                 </div>
-                <div className="text-center p-3 bg-slate-800 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-400">{userStats.games_played}</div>
-                  <div className="text-text-secondary text-sm">Games Played</div>
-                </div>
+                <div className="text-text-secondary text-sm">Total P/L</div>
               </div>
-              {userStats.last_game_date && (
-                <div className="mt-4 text-center">
-                  <p className="text-text-secondary text-sm">
-                    Last Game: <span className="text-white">{formatDate(userStats.last_game_date, false)}</span>
-                  </p>
-                </div>
-              )}
-              {userStats.games_played === 0 && (
-                <div className="mt-4 text-center">
-                  <p className="text-text-secondary text-sm">
-                    No completed games yet. Start playing to track your stats!
-                  </p>
-                </div>
-              )}
-            </Card>
-          )}
+              <div className="text-center p-3 bg-slate-800 rounded-lg">
+                <div className="text-2xl font-bold text-blue-400">{userStats?.games_played || 0}</div>
+                <div className="text-text-secondary text-sm">Games Played</div>
+              </div>
+            </div>
+            {userStats?.last_game_date && (
+              <div className="mt-4 text-center">
+                <p className="text-text-secondary text-sm">
+                  Last Game: <span className="text-white">{formatDate(userStats.last_game_date, false)}</span>
+                </p>
+              </div>
+            )}
+            {(!userStats?.games_played || userStats.games_played === 0) && (
+              <div className="mt-4 text-center">
+                <p className="text-text-secondary text-sm">
+                  No completed games yet. Start playing to track your stats!
+                </p>
+              </div>
+            )}
+          </Card>
 
           {/* Update Profile Form */}
           <form onSubmit={handleUpdateProfile} className="space-y-4">
