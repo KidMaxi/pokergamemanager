@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useMemo } from "react"
-import type { GameSession, PlayerInGame, Player, CashOutLogRecord, BuyInRecord } from "../types"
+import type { GameSession, PlayerInGame, Player, CashOutLogRecord, BuyInRecord, Friendship } from "../types"
 import {
   formatCurrency,
   formatDate,
@@ -17,6 +17,8 @@ import Modal from "./common/Modal"
 import Card from "./common/Card"
 import LiveTimer from "./common/LiveTimer"
 import PaymentSummary from "./PaymentSummary"
+import { useAuth } from "../contexts/AuthContext"
+import { supabase } from "../lib/supabase"
 
 interface ActiveGameScreenProps {
   session: GameSession
@@ -156,8 +158,18 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   onNavigateToDashboard,
   onAddNewPlayerGlobally,
 }) => {
+  const { user } = useAuth()
   const [isAddPlayerModalOpen, setIsAddPlayerModalOpen] = useState(false)
   const [newPlayerNameInModal, setNewPlayerNameInModal] = useState("")
+
+  // Add Friend to Game states
+  const [isInviteFriendsModalOpen, setIsInviteFriendsModalOpen] = useState(false)
+  const [friends, setFriends] = useState<Friendship[]>([])
+  const [loadingFriends, setLoadingFriends] = useState(false)
+  const [selectedFriendsToInvite, setSelectedFriendsToInvite] = useState<string[]>([])
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [inviteError, setInviteError] = useState("")
+  const [inviteSuccess, setInviteSuccess] = useState("")
 
   const [isBuyInModalOpen, setIsBuyInModalOpen] = useState(false)
   const [buyInPlayerId, setBuyInPlayerId] = useState<string | null>(null)
@@ -198,6 +210,117 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const totalCashOutValueAcrossAllPlayers = useMemo(() => {
     return session.playersInGame.reduce((sum, p) => sum + p.cashOutAmount, 0)
   }, [session.playersInGame])
+
+  // Load friends for invitation
+  const loadFriendsForInvitation = async () => {
+    if (!user) return
+
+    setLoadingFriends(true)
+    try {
+      // Get friendships
+      const { data: friendsData, error } = await supabase
+        .from("friendships")
+        .select("id, user_id, friend_id, created_at")
+        .eq("user_id", user.id)
+
+      if (error) {
+        console.error("Error loading friendships:", error)
+        setFriends([])
+        return
+      }
+
+      if (!friendsData || friendsData.length === 0) {
+        setFriends([])
+        return
+      }
+
+      // Get friend profiles
+      const friendIds = friendsData.map((f) => f.friend_id)
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", friendIds)
+
+      if (profilesError) {
+        console.error("Error loading friend profiles:", profilesError)
+        setFriends([])
+        return
+      }
+
+      // Combine the data
+      const friendsWithProfiles = friendsData.map((friendship) => ({
+        ...friendship,
+        friend_profile: profilesData?.find((p) => p.id === friendship.friend_id),
+      }))
+
+      setFriends(friendsWithProfiles)
+    } catch (error) {
+      console.error("Error loading friends:", error)
+      setFriends([])
+    } finally {
+      setLoadingFriends(false)
+    }
+  }
+
+  // Filter friends who haven't been invited yet
+  const getUninvitedFriends = () => {
+    const alreadyInvited = session.invitedUsers || []
+    return friends.filter((friend) => !alreadyInvited.includes(friend.friend_id))
+  }
+
+  const handleInviteFriendsToGame = async () => {
+    if (!user || selectedFriendsToInvite.length === 0) return
+
+    setInviteLoading(true)
+    setInviteError("")
+    setInviteSuccess("")
+
+    try {
+      // Send invitations to selected friends
+      const invitations = selectedFriendsToInvite.map((friendId) => ({
+        game_session_id: session.id,
+        inviter_id: user.id,
+        invitee_id: friendId,
+        status: "pending" as const,
+      }))
+
+      const { error } = await supabase.from("game_invitations").insert(invitations)
+
+      if (error) {
+        throw error
+      }
+
+      // Update the session's invited users list
+      const updatedSession = {
+        ...session,
+        invitedUsers: [...(session.invitedUsers || []), ...selectedFriendsToInvite],
+      }
+
+      onUpdateSession(updatedSession)
+
+      setInviteSuccess(
+        `Sent ${selectedFriendsToInvite.length} invitation${selectedFriendsToInvite.length > 1 ? "s" : ""}!`,
+      )
+      setSelectedFriendsToInvite([])
+
+      // Close modal after a short delay
+      setTimeout(() => {
+        setIsInviteFriendsModalOpen(false)
+        setInviteSuccess("")
+      }, 2000)
+    } catch (error: any) {
+      console.error("Error sending invitations:", error)
+      setInviteError("Failed to send invitations. Please try again.")
+    } finally {
+      setInviteLoading(false)
+    }
+  }
+
+  const handleFriendInviteToggle = (friendId: string) => {
+    setSelectedFriendsToInvite((prev) =>
+      prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId],
+    )
+  }
 
   // Create a player with automatic standard buy-in
   const createPlayerWithBuyIn = (name: string): PlayerInGame => {
@@ -400,7 +523,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     const player = session.playersInGame.find((p) => p.playerId === playerId)
     if (player && player.status === "active") {
       setCashOutPlayerId(playerId)
-      setCashOutPointAmount(player.pointStack > 0 ? player.pointStack : 0)
+      // Set default to 0 - player can choose how much to cash out
+      setCashOutPointAmount(0)
       setIsCashOutModalOpen(true)
       setFormError("")
     } else {
@@ -411,7 +535,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const handleCashOut = () => {
     const finalCashOutAmount = isNaN(cashOutPointAmount) ? 0 : cashOutPointAmount
     if (!cashOutPlayerId || finalCashOutAmount < 0) {
-      setFormError("Invalid point amount to cash out. Must be non-negative.")
+      setFormError("Invalid point amount to cash out. Must be 0 or greater.")
       return
     }
 
@@ -421,8 +545,9 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       return
     }
 
+    // Allow cash out up to total points on table (including 0 for leaving with nothing)
     if (finalCashOutAmount > session.currentPhysicalPointsOnTable) {
-      setFormError("Cannot cash out more points than are currently physically on the table.")
+      setFormError(`Cannot cash out more than ${session.currentPhysicalPointsOnTable} points (total points on table).`)
       return
     }
 
@@ -440,7 +565,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         p.playerId === cashOutPlayerId
           ? {
               ...p,
-              pointStack: 0,
+              pointStack: 0, // Player leaves the game when they cash out
               cashOutAmount: p.cashOutAmount + cashValue,
               cashOutLog: [...p.cashOutLog, newCashOutLogEntry],
               status: "cashed_out_early" as const,
@@ -700,7 +825,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       )}
 
       {session.status === "active" && (
-        <div className="mb-6 flex space-x-3">
+        <div className="mb-6 flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3">
           <Button
             onClick={() => {
               setIsAddPlayerModalOpen(true)
@@ -708,8 +833,22 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               setFormError("")
             }}
             variant="primary"
+            className="flex-1"
           >
             Add New Player to Game
+          </Button>
+          <Button
+            onClick={() => {
+              setIsInviteFriendsModalOpen(true)
+              setSelectedFriendsToInvite([])
+              setInviteError("")
+              setInviteSuccess("")
+              loadFriendsForInvitation()
+            }}
+            variant="secondary"
+            className="flex-1"
+          >
+            Add Friend to Game
           </Button>
         </div>
       )}
@@ -907,6 +1046,97 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </div>
       </Modal>
 
+      {/* Invite Friends to Game Modal */}
+      <Modal
+        isOpen={isInviteFriendsModalOpen}
+        onClose={() => {
+          setIsInviteFriendsModalOpen(false)
+          setSelectedFriendsToInvite([])
+          setInviteError("")
+          setInviteSuccess("")
+        }}
+        title="Invite Friends to Game"
+      >
+        <div className="space-y-4">
+          <p className="text-text-secondary text-sm">
+            Select friends to invite to this active game. They will receive an invitation notification and can join the
+            game.
+          </p>
+
+          {loadingFriends ? (
+            <p className="text-sm text-text-secondary">Loading friends...</p>
+          ) : getUninvitedFriends().length === 0 ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-text-secondary mb-2">
+                {friends.length === 0
+                  ? "No friends available to invite. Add friends first!"
+                  : "All your friends have already been invited to this game."}
+              </p>
+            </div>
+          ) : (
+            <div className="max-h-48 overflow-y-auto space-y-2 border border-border-default rounded p-2">
+              {getUninvitedFriends().map((friendship) => (
+                <label
+                  key={friendship.friend_id}
+                  className="flex items-center space-x-2 cursor-pointer p-2 hover:bg-surface-input rounded"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedFriendsToInvite.includes(friendship.friend_id)}
+                    onChange={() => handleFriendInviteToggle(friendship.friend_id)}
+                    className="rounded border-border-default"
+                  />
+                  <div className="flex items-center space-x-2">
+                    <div className="w-8 h-8 bg-brand-primary rounded-full flex items-center justify-center text-white text-xs font-bold">
+                      {friendship.friend_profile?.full_name?.charAt(0) ||
+                        friendship.friend_profile?.email?.charAt(0).toUpperCase() ||
+                        "?"}
+                    </div>
+                    <div>
+                      <span className="text-sm text-text-primary font-medium">
+                        {friendship.friend_profile?.full_name || "Unknown User"}
+                      </span>
+                      <p className="text-xs text-text-secondary">{friendship.friend_profile?.email}</p>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {selectedFriendsToInvite.length > 0 && (
+            <p className="text-sm text-blue-400">
+              {selectedFriendsToInvite.length} friend{selectedFriendsToInvite.length > 1 ? "s" : ""} selected to invite
+            </p>
+          )}
+
+          {inviteError && <p className="text-sm text-red-500">{inviteError}</p>}
+          {inviteSuccess && <p className="text-sm text-green-400">{inviteSuccess}</p>}
+
+          <div className="flex justify-end space-x-2 pt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setIsInviteFriendsModalOpen(false)
+                setSelectedFriendsToInvite([])
+                setInviteError("")
+                setInviteSuccess("")
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleInviteFriendsToGame}
+              variant="primary"
+              disabled={inviteLoading || selectedFriendsToInvite.length === 0}
+            >
+              {inviteLoading ? "Sending..." : `Send Invitation${selectedFriendsToInvite.length > 1 ? "s" : ""}`}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Buy-in Modal */}
       <Modal
         isOpen={isBuyInModalOpen}
@@ -1057,10 +1287,24 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             step="1"
             max={session.currentPhysicalPointsOnTable}
           />
+          <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
+            <p className="text-blue-200 text-sm">
+              <strong>Cash Out Rules:</strong> Players can cash out any amount from 0 to{" "}
+              <span className="text-white font-semibold">{session.currentPhysicalPointsOnTable} points</span> (total
+              points on table). Enter 0 if the player is leaving with no money.
+            </p>
+          </div>
           <p className="text-sm text-text-secondary">
             This player will receive:{" "}
-            <span className="text-white">{formatCurrency(cashOutPointAmount * session.pointToCashRate)}</span> and will
-            be marked as 'Cashed Out Early'.
+            <span className="text-white font-semibold">
+              {formatCurrency(cashOutPointAmount * session.pointToCashRate)}
+            </span>{" "}
+            and will be marked as 'Cashed Out Early'.
+            {cashOutPointAmount === 0 && (
+              <span className="block text-yellow-300 mt-1">
+                <strong>Note:</strong> Player is leaving with $0.00 (busted out).
+              </span>
+            )}
           </p>
           {formError && <p className="text-sm text-red-500">{formError}</p>}
           <div className="flex justify-end space-x-2">

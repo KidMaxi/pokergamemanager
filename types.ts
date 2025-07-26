@@ -35,9 +35,10 @@ export interface GameSession {
   endTime?: string
   status: "active" | "completed" | "pending_close"
   pointToCashRate: number
-  standardBuyInAmount: number // Add this new field
+  standardBuyInAmount: number
   playersInGame: PlayerInGame[]
   currentPhysicalPointsOnTable: number
+  invitedUsers?: string[]
 }
 
 export type View = "dashboard" | "activeGame" | "friends"
@@ -85,5 +86,24 @@ export interface Friendship {
     email: string
     all_time_profit_loss: number
     games_played: number
+  }
+}
+
+export interface GameInvitation {
+  id: string
+  game_session_id: string
+  inviter_id: string
+  invitee_id: string
+  status: "pending" | "accepted" | "declined"
+  created_at: string
+  updated_at: string
+  game_session?: {
+    name: string
+    start_time: string
+    status: string
+  }
+  inviter_profile?: {
+    full_name: string | null
+    email: string
   }
 }

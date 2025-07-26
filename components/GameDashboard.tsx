@@ -1,14 +1,17 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
-import type { GameSession, Player } from "../types"
+import { useState, useEffect } from "react"
+import type { GameSession, Player, GameInvitation, Friendship } from "../types"
 import { generateId, formatDate, formatCurrency, calculateDuration, formatDurationCompact } from "../utils"
 import Button from "./common/Button"
 import Input from "./common/Input"
 import Modal from "./common/Modal"
 import Card from "./common/Card"
 import LiveTimer from "./common/LiveTimer"
+import { useAuth } from "../contexts/AuthContext"
+import { acceptGameInvitation, declineGameInvitation } from "../actions/game-invitations"
+import { supabase } from "../lib/supabase"
 
 interface GameDashboardProps {
   players: Player[]
@@ -90,6 +93,9 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
               <p>
                 Buy-ins: {formatCurrency(totalBuyInsCash)} ({totalBuyInEntries})
               </p>
+              {session.invitedUsers && session.invitedUsers.length > 0 && (
+                <p className="text-blue-400">Invited Users: {session.invitedUsers.length}</p>
+              )}
             </div>
           </div>
           <Button
@@ -114,6 +120,81 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
   )
 }
 
+interface GameInvitationCardProps {
+  invitation: GameInvitation
+}
+
+const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation }) => {
+  const [acceptLoading, setAcceptLoading] = useState(false)
+  const [declineLoading, setDeclineLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  const handleAccept = async () => {
+    setAcceptLoading(true)
+    setError("")
+
+    try {
+      const result = await acceptGameInvitation(invitation.id)
+      if (result.error) {
+        setError(result.error)
+      }
+      // If successful, the action will redirect
+    } catch (error) {
+      setError("Failed to accept invitation")
+    } finally {
+      setAcceptLoading(false)
+    }
+  }
+
+  const handleDecline = async () => {
+    setDeclineLoading(true)
+    setError("")
+
+    try {
+      const result = await declineGameInvitation(invitation.id)
+      if (result.error) {
+        setError(result.error)
+      } else {
+        // Refresh the page or update state to remove the invitation
+        window.location.reload()
+      }
+    } catch (error) {
+      setError("Failed to decline invitation")
+    } finally {
+      setDeclineLoading(false)
+    }
+  }
+
+  return (
+    <Card className="mb-3 sm:mb-4">
+      <div className="space-y-3">
+        <h4 className="text-base sm:text-lg font-semibold text-brand-primary truncate">Game Invitation</h4>
+        <div className="text-xs sm:text-sm text-text-secondary">
+          <p>
+            <strong>{invitation.inviter_profile?.full_name || invitation.inviter_profile?.email}</strong> invited you to
+            join:
+          </p>
+          <p className="text-white font-medium">{invitation.game_session?.name}</p>
+          <p>
+            Started:{" "}
+            {invitation.game_session?.start_time ? formatDate(invitation.game_session.start_time, false) : "N/A"}
+          </p>
+          <p>Invited: {formatDate(invitation.created_at, false)}</p>
+        </div>
+        <div className="flex space-x-2">
+          <Button onClick={handleAccept} variant="primary" size="sm" disabled={acceptLoading}>
+            {acceptLoading ? "Accepting..." : "Accept"}
+          </Button>
+          <Button onClick={handleDecline} variant="ghost" size="sm" disabled={declineLoading}>
+            {declineLoading ? "Declining..." : "Decline"}
+          </Button>
+        </div>
+        {error && <p className="text-sm text-red-500">{error}</p>}
+      </div>
+    </Card>
+  )
+}
+
 const GameDashboard: React.FC<GameDashboardProps> = ({
   players,
   gameSessions,
@@ -121,15 +202,107 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
   onSelectGame,
   onDeleteGame,
 }) => {
+  const { user } = useAuth()
   const [isNewGameModalOpen, setIsNewGameModalOpen] = useState(false)
   const [newGameName, setNewGameName] = useState(`Poker Game - ${new Date().toLocaleDateString()}`)
   const [pointRate, setPointRate] = useState(0.1)
   const [formError, setFormError] = useState("")
   const [standardBuyInAmount, setStandardBuyInAmount] = useState(25)
+  const [selectedFriends, setSelectedFriends] = useState<string[]>([])
+  const [friends, setFriends] = useState<Friendship[]>([])
+  const [loadingFriends, setLoadingFriends] = useState(false)
 
   const [gameToDelete, setGameToDelete] = useState<{ id: string; name: string; status: GameSession["status"] } | null>(
     null,
   )
+
+  const [pendingInvitations, setPendingInvitations] = useState<GameInvitation[]>([])
+
+  useEffect(() => {
+    const fetchPendingInvitations = async () => {
+      if (!user) return
+
+      try {
+        const { data, error } = await supabase
+          .from("game_invitations")
+          .select(`
+          *,
+          game_session:game_sessions(name, start_time, status),
+          inviter_profile:profiles!game_invitations_inviter_id_fkey(full_name, email)
+        `)
+          .eq("invitee_id", user.id)
+          .eq("status", "pending")
+
+        if (error) {
+          console.error("Error fetching pending invitations:", error)
+          // If the table doesn't exist yet, just set empty array
+          setPendingInvitations([])
+        } else {
+          setPendingInvitations(data || [])
+        }
+      } catch (error) {
+        console.error("Game invitations feature not available yet:", error)
+        setPendingInvitations([])
+      }
+    }
+
+    fetchPendingInvitations()
+  }, [user])
+
+  const loadFriends = async () => {
+    if (!user) return
+
+    setLoadingFriends(true)
+    try {
+      // Fixed query - use explicit join instead of nested select
+      const { data: friendsData, error } = await supabase
+        .from("friendships")
+        .select(`
+          id,
+          user_id,
+          friend_id,
+          created_at
+        `)
+        .eq("user_id", user.id)
+
+      if (error) {
+        console.error("Error loading friendships:", error)
+        setFriends([])
+        return
+      }
+
+      if (!friendsData || friendsData.length === 0) {
+        setFriends([])
+        return
+      }
+
+      // Get friend profiles separately
+      const friendIds = friendsData.map((f) => f.friend_id)
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", friendIds)
+
+      if (profilesError) {
+        console.error("Error loading friend profiles:", profilesError)
+        setFriends([])
+        return
+      }
+
+      // Combine the data
+      const friendsWithProfiles = friendsData.map((friendship) => ({
+        ...friendship,
+        friend_profile: profilesData?.find((p) => p.id === friendship.friend_id),
+      }))
+
+      setFriends(friendsWithProfiles)
+    } catch (error) {
+      console.error("Error loading friends:", error)
+      setFriends([])
+    } finally {
+      setLoadingFriends(false)
+    }
+  }
 
   const handleStartNewGameSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -146,20 +319,25 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
       return
     }
     setFormError("")
-    onStartNewGame({
+
+    const newGameSession: GameSession = {
       id: generateId(),
       name: newGameName.trim(),
       startTime: new Date().toISOString(),
       status: "active",
       pointToCashRate: pointRate,
       standardBuyInAmount: standardBuyInAmount,
-      playersInGame: [], // This will be populated by the parent component
+      playersInGame: [],
       currentPhysicalPointsOnTable: 0,
-    })
+      invitedUsers: selectedFriends,
+    }
+
+    onStartNewGame(newGameSession)
     setIsNewGameModalOpen(false)
     setNewGameName(`Poker Game - ${new Date().toLocaleDateString()}`)
     setPointRate(0.1)
     setStandardBuyInAmount(25)
+    setSelectedFriends([])
   }
 
   const openDeleteConfirmModal = (gameId: string, gameName: string, gameStatus: GameSession["status"]) => {
@@ -168,12 +346,13 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
   const confirmDeleteGame = () => {
     if (gameToDelete) {
-      // Note: We don't need to do anything special here for P/L tracking
-      // because the user's all-time stats are already stored in their profile
-      // and are separate from the game session data
       onDeleteGame(gameToDelete.id)
       setGameToDelete(null)
     }
+  }
+
+  const handleFriendToggle = (friendId: string) => {
+    setSelectedFriends((prev) => (prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]))
   }
 
   const sortGamesByDateDesc = (a: GameSession, b: GameSession) =>
@@ -192,6 +371,8 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
           setNewGameName(`Poker Game - ${new Date().toLocaleDateString()}`)
           setFormError("")
           setStandardBuyInAmount(25)
+          setSelectedFriends([])
+          loadFriends()
         }}
         variant="primary"
         size="lg"
@@ -199,6 +380,15 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
       >
         Start New Game
       </Button>
+
+      {pendingInvitations.length > 0 && (
+        <section className="mb-8">
+          <h3 className="text-2xl font-semibold text-blue-400 mb-4">Game Invitations</h3>
+          {pendingInvitations.map((invitation) => (
+            <GameInvitationCard key={invitation.id} invitation={invitation} />
+          ))}
+        </section>
+      )}
 
       {activeGames.length > 0 && (
         <section className="mb-8">
@@ -278,6 +468,38 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
             onChange={(e) => setStandardBuyInAmount(Number.parseFloat(e.target.value))}
             placeholder="e.g., 25.00"
           />
+
+          {/* Friend Selection */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-text-primary">Invite Friends (Optional)</label>
+            {loadingFriends ? (
+              <p className="text-sm text-text-secondary">Loading friends...</p>
+            ) : friends.length === 0 ? (
+              <p className="text-sm text-text-secondary">No friends to invite. Add friends first!</p>
+            ) : (
+              <div className="max-h-32 overflow-y-auto space-y-2 border border-border-default rounded p-2">
+                {friends.map((friendship) => (
+                  <label key={friendship.friend_id} className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedFriends.includes(friendship.friend_id)}
+                      onChange={() => handleFriendToggle(friendship.friend_id)}
+                      className="rounded border-border-default"
+                    />
+                    <span className="text-sm text-text-primary">
+                      {friendship.friend_profile?.full_name || friendship.friend_profile?.email}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {selectedFriends.length > 0 && (
+              <p className="text-sm text-blue-400">
+                {selectedFriends.length} friend{selectedFriends.length > 1 ? "s" : ""} will be invited
+              </p>
+            )}
+          </div>
+
           {formError && <p className="text-sm text-red-500">{formError}</p>}
           <div className="flex justify-end space-x-2">
             <Button type="button" variant="ghost" onClick={() => setIsNewGameModalOpen(false)}>

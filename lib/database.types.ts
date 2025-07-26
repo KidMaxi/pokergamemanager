@@ -57,6 +57,7 @@ export interface Database {
           game_metadata: Json
           created_at: string
           updated_at: string
+          invited_users: string[] | null
         }
         Insert: {
           id?: string
@@ -70,6 +71,7 @@ export interface Database {
           game_metadata?: Json
           created_at?: string
           updated_at?: string
+          invited_users?: string[] | null
         }
         Update: {
           id?: string
@@ -83,6 +85,7 @@ export interface Database {
           game_metadata?: Json
           created_at?: string
           updated_at?: string
+          invited_users?: string[] | null
         }
       }
       friendships: {
@@ -126,6 +129,35 @@ export interface Database {
           id?: string
           sender_id?: string
           receiver_id?: string
+          status?: "pending" | "accepted" | "declined"
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      game_invitations: {
+        Row: {
+          id: string
+          game_session_id: string
+          inviter_id: string
+          invitee_id: string
+          status: "pending" | "accepted" | "declined"
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          game_session_id: string
+          inviter_id: string
+          invitee_id: string
+          status?: "pending" | "accepted" | "declined"
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          game_session_id?: string
+          inviter_id?: string
+          invitee_id?: string
           status?: "pending" | "accepted" | "declined"
           created_at?: string
           updated_at?: string

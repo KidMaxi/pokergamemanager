@@ -48,12 +48,33 @@ export default function Home() {
     try {
       setLoading(true)
 
-      // Start with simpler query - just basic fields to avoid hanging on complex data
-      const { data: sessionsData, error: sessionsError } = await supabase
-        .from("game_sessions")
-        .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data")
-        .eq("user_id", user!.id)
-        .order("created_at", { ascending: false })
+      // First, try to query with invited_users column, fallback if it doesn't exist
+      let sessionsData
+      let sessionsError
+
+      try {
+        // Try with invited_users column first
+        const result = await supabase
+          .from("game_sessions")
+          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users")
+          .eq("user_id", user!.id)
+          .order("created_at", { ascending: false })
+
+        sessionsData = result.data
+        sessionsError = result.error
+      } catch (error) {
+        console.log("invited_users column doesn't exist yet, falling back to basic query")
+
+        // Fallback query without invited_users column
+        const result = await supabase
+          .from("game_sessions")
+          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data")
+          .eq("user_id", user!.id)
+          .order("created_at", { ascending: false })
+
+        sessionsData = result.data
+        sessionsError = result.error
+      }
 
       if (sessionsError) {
         console.error("Sessions query error:", sessionsError)
@@ -71,6 +92,7 @@ export default function Home() {
         standardBuyInAmount: 25, // Default value
         currentPhysicalPointsOnTable: 0, // Will be calculated from players_data
         playersInGame: session.players_data || [], // Load from JSONB column
+        invitedUsers: session.invited_users || [], // Use empty array if column doesn't exist
       }))
 
       // Calculate current physical points for active games
@@ -168,9 +190,34 @@ export default function Home() {
     }
   }
 
+  const sendGameInvitations = async (gameSessionId: string, invitedUserIds: string[]) => {
+    if (!invitedUserIds.length) return
+
+    try {
+      // Send invitations to all selected friends
+      const invitations = invitedUserIds.map((friendId) => ({
+        game_session_id: gameSessionId,
+        inviter_id: user!.id,
+        invitee_id: friendId,
+        status: "pending" as const,
+      }))
+
+      const { error } = await supabase.from("game_invitations").insert(invitations)
+
+      if (error) {
+        console.error("Error sending invitations:", error)
+      } else {
+        console.log(`Sent ${invitations.length} game invitations`)
+      }
+    } catch (error) {
+      console.error("Error sending game invitations:", error)
+    }
+  }
+
   const saveGameSessionToDatabase = async (session: GameSession) => {
     try {
-      const { error } = await supabase.from("game_sessions").insert({
+      // Prepare the insert data
+      const insertData: any = {
         id: session.id,
         user_id: user!.id,
         name: session.name,
@@ -182,7 +229,14 @@ export default function Home() {
         game_metadata: {
           standardBuyInAmount: session.standardBuyInAmount,
         },
-      })
+      }
+
+      // Only add invited_users if the session has them and they exist
+      if (session.invitedUsers && session.invitedUsers.length > 0) {
+        insertData.invited_users = session.invitedUsers
+      }
+
+      const { error } = await supabase.from("game_sessions").insert(insertData)
 
       if (error) throw error
     } catch (error) {
@@ -193,18 +247,26 @@ export default function Home() {
 
   const updateGameSessionInDatabase = async (session: GameSession) => {
     try {
+      // Prepare the update data
+      const updateData: any = {
+        name: session.name,
+        end_time: session.endTime,
+        status: session.status,
+        point_to_cash_rate: session.pointToCashRate,
+        players_data: session.playersInGame,
+        game_metadata: {
+          standardBuyInAmount: session.standardBuyInAmount,
+        },
+      }
+
+      // Only add invited_users if the session has them
+      if (session.invitedUsers) {
+        updateData.invited_users = session.invitedUsers
+      }
+
       const { error } = await supabase
         .from("game_sessions")
-        .update({
-          name: session.name,
-          end_time: session.endTime,
-          status: session.status,
-          point_to_cash_rate: session.pointToCashRate,
-          players_data: session.playersInGame,
-          game_metadata: {
-            standardBuyInAmount: session.standardBuyInAmount,
-          },
-        })
+        .update(updateData)
         .eq("id", session.id)
         .eq("user_id", user!.id)
 
@@ -216,29 +278,45 @@ export default function Home() {
   }
 
   const updateUserStatsAfterGameCompletion = async (session: GameSession) => {
-    if (!user || !profile?.full_name) return
+    if (!user) return
 
     try {
-      // Find the user's player data in the completed game
-      const userPlayer = session.playersInGame.find(
-        (player) => player.name.toLowerCase() === profile.full_name?.toLowerCase(),
-      )
+      // Get all users who should have their stats updated (host + invited users who accepted)
+      const allParticipantIds = [user.id, ...(session.invitedUsers || [])]
 
-      if (userPlayer) {
-        // Calculate user's profit/loss for this game
-        const totalBuyIn = userPlayer.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
-        const profitLoss = userPlayer.cashOutAmount - totalBuyIn
+      // Get profiles for all participants
+      const { data: participantProfiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name")
+        .in("id", allParticipantIds)
 
-        // Update user stats in database
-        const { error } = await supabase.rpc("update_user_game_stats", {
-          user_id_param: user.id,
-          profit_loss_amount: profitLoss,
-        })
+      if (profilesError) {
+        console.error("Error fetching participant profiles:", profilesError)
+        return
+      }
 
-        if (error) {
-          console.error("Error updating user stats:", error)
-        } else {
-          console.log(`Updated user stats: P/L ${profitLoss}`)
+      // Update stats for each participant who played in the game
+      for (const participantProfile of participantProfiles) {
+        const userPlayer = session.playersInGame.find(
+          (player) => player.name.toLowerCase() === participantProfile.full_name?.toLowerCase(),
+        )
+
+        if (userPlayer) {
+          // Calculate user's profit/loss for this game
+          const totalBuyIn = userPlayer.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
+          const profitLoss = userPlayer.cashOutAmount - totalBuyIn
+
+          // Update user stats in database
+          const { error } = await supabase.rpc("update_user_game_stats", {
+            user_id_param: participantProfile.id,
+            profit_loss_amount: profitLoss,
+          })
+
+          if (error) {
+            console.error(`Error updating stats for user ${participantProfile.id}:`, error)
+          } else {
+            console.log(`Updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
+          }
         }
       }
     } catch (error) {
@@ -295,6 +373,17 @@ export default function Home() {
 
     try {
       await saveGameSessionToDatabase(newSessionWithDefaults)
+
+      // Send invitations to selected friends (only if invitations system is available)
+      if (session.invitedUsers && session.invitedUsers.length > 0) {
+        try {
+          await sendGameInvitations(newSessionWithDefaults.id, session.invitedUsers)
+        } catch (error) {
+          console.error("Error sending invitations (feature may not be available yet):", error)
+          // Don't fail the game creation if invitations fail
+        }
+      }
+
       setGameSessions((prevSessions) => [...prevSessions, newSessionWithDefaults])
       setActiveGameId(newSessionWithDefaults.id)
       setCurrentView("activeGame")
@@ -329,7 +418,7 @@ export default function Home() {
     try {
       await updateGameSessionInDatabase(completedSession)
 
-      // Update user's all-time stats
+      // Update stats for all participants (host + invited users)
       await updateUserStatsAfterGameCompletion(completedSession)
 
       setGameSessions((prevSessions) => {
