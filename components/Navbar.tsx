@@ -31,6 +31,7 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [userStats, setUserStats] = useState<UserStats | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const handleOpenProfile = async () => {
     if (user) {
@@ -113,6 +114,19 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
     setCurrentView("dashboard")
   }
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      // Small delay to show the refresh animation
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      // Reload the page while preserving authentication
+      window.location.reload()
+    } catch (error) {
+      console.error("Error refreshing:", error)
+      setIsRefreshing(false)
+    }
+  }
+
   const getStatsColor = (profitLoss: number) => {
     if (profitLoss > 0) return "text-green-400"
     if (profitLoss < 0) return "text-red-400"
@@ -124,14 +138,42 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
       <nav className="bg-surface-card border-b border-border-default">
         <div className="container mx-auto px-3 py-2 sm:px-4 sm:py-3">
           <div className="flex justify-between items-center">
-            {/* Mobile-optimized title */}
-            <button
-              onClick={handleTitleClick}
-              className="bg-brand-primary text-white px-2 py-1.5 sm:px-4 sm:py-2 rounded-md text-sm sm:text-xl font-bold hover:bg-brand-primary-hover transition-colors focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 focus:ring-offset-surface-card"
-            >
-              <span className="hidden sm:inline">Poker Home Game Manager</span>
-              <span className="sm:hidden">Poker Manager</span>
-            </button>
+            {/* Mobile-optimized title with refresh button */}
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={handleTitleClick}
+                className="bg-brand-primary text-white px-2 py-1.5 sm:px-4 sm:py-2 rounded-md text-sm sm:text-xl font-bold hover:bg-brand-primary-hover transition-colors focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 focus:ring-offset-surface-card"
+              >
+                <span className="hidden sm:inline">Poker Home Game Manager</span>
+                <span className="sm:hidden">Poker Manager</span>
+              </button>
+
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="bg-surface-input text-text-secondary hover:text-text-primary hover:bg-surface-hover px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 focus:ring-offset-surface-card disabled:opacity-50"
+                title="Refresh page"
+              >
+                <div className={`${isRefreshing ? "animate-spin" : ""}`}>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                    <path d="M21 3v5h-5" />
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                    <path d="M3 21v-5h5" />
+                  </svg>
+                </div>
+                <span className="hidden sm:inline ml-1">{isRefreshing ? "Refreshing..." : "Refresh"}</span>
+              </button>
+            </div>
 
             <div className="flex items-center space-x-1 sm:space-x-2">
               <button

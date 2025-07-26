@@ -509,15 +509,36 @@ export default function Home() {
 
   const handleDeleteGame = async (sessionId: string) => {
     try {
-      // Delete from database first
-      const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
+      const gameToDelete = gameSessions.find((s) => s.id === sessionId)
 
-      if (error) {
-        console.error("Database delete error:", error)
-        throw error
+      if (!gameToDelete) {
+        alert("Game not found.")
+        return
       }
 
-      // Update local state
+      // If user is the owner, delete from database
+      if (gameToDelete.isOwner !== false) {
+        // Delete from database first
+        const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
+
+        if (error) {
+          console.error("Database delete error:", error)
+          throw error
+        }
+        console.log("Game deleted successfully from database")
+      } else {
+        // If user was invited, just remove from local state (don't delete from database)
+        // Optionally, we could also remove the invitation record
+        try {
+          await supabase.from("game_invitations").delete().eq("game_session_id", sessionId).eq("invitee_id", user!.id)
+
+          console.log("Invitation record removed")
+        } catch (error) {
+          console.warn("Could not remove invitation record (non-critical):", error)
+        }
+      }
+
+      // Update local state (remove from UI)
       setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
 
       // If this was the active game, navigate back to dashboard
@@ -526,10 +547,10 @@ export default function Home() {
         setCurrentView("dashboard")
       }
 
-      console.log("Game deleted successfully")
+      console.log(gameToDelete.isOwner !== false ? "Game deleted successfully" : "Game removed from dashboard")
     } catch (error) {
-      console.error("Error deleting game:", error)
-      alert("Failed to delete game. Please try again.")
+      console.error("Error deleting/removing game:", error)
+      alert("Failed to delete/remove game. Please try again.")
     }
   }
 

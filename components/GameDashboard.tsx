@@ -102,15 +102,20 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
               )}
             </div>
           </div>
-          {/* Only show delete button for games the user owns */}
-          {session.isOwner !== false && (
+          {/* Show delete button for games the user owns OR for completed invited games */}
+          {(session.isOwner !== false || (session.isOwner === false && session.status === "completed")) && (
             <Button
               onClick={() => onConfirmDelete(session.id, session.name, session.status)}
               variant="danger"
               size="sm"
               className="text-xs px-2 py-1 flex-shrink-0"
+              title={
+                session.isOwner === false && session.status === "completed"
+                  ? "Remove this completed game from your dashboard"
+                  : "Delete this game"
+              }
             >
-              Delete
+              {session.isOwner === false && session.status === "completed" ? "Remove" : "Delete"}
             </Button>
           )}
         </div>
@@ -625,28 +630,47 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
       <Modal
         isOpen={!!gameToDelete}
         onClose={() => setGameToDelete(null)}
-        title={`Confirm Delete Game: ${gameToDelete?.name || ""}`}
+        title={
+          gameToDelete?.status === "completed" && gameSessions.find((g) => g.id === gameToDelete.id)?.isOwner === false
+            ? `Remove Game: ${gameToDelete?.name || ""}`
+            : `Confirm Delete Game: ${gameToDelete?.name || ""}`
+        }
       >
         <p className="text-text-secondary mb-4">
-          Are you sure you want to delete the game "{gameToDelete?.name || "this game"}"?
-          {(gameToDelete?.status === "active" || gameToDelete?.status === "pending_close") && (
-            <strong className="text-red-400 block mt-2">
-              This game is not yet completed. Deleting it will discard its current progress.
-            </strong>
+          {gameToDelete?.status === "completed" &&
+          gameSessions.find((g) => g.id === gameToDelete.id)?.isOwner === false ? (
+            <>
+              Are you sure you want to remove the game "{gameToDelete?.name || "this game"}" from your dashboard?
+              <span className="text-blue-400 block mt-2 text-sm">
+                ℹ️ This will only remove it from your view. The original game and your stats will be preserved.
+              </span>
+            </>
+          ) : (
+            <>
+              Are you sure you want to delete the game "{gameToDelete?.name || "this game"}"?
+              {(gameToDelete?.status === "active" || gameToDelete?.status === "pending_close") && (
+                <strong className="text-red-400 block mt-2">
+                  This game is not yet completed. Deleting it will discard its current progress.
+                </strong>
+              )}
+              {gameToDelete?.status === "completed" && (
+                <span className="text-green-400 block mt-2 text-sm">
+                  ✓ Your personal stats from this game will be preserved in your profile.
+                </span>
+              )}
+              This action cannot be undone.
+            </>
           )}
-          {gameToDelete?.status === "completed" && (
-            <span className="text-green-400 block mt-2 text-sm">
-              ✓ Your personal stats from this game will be preserved in your profile.
-            </span>
-          )}
-          This action cannot be undone.
         </p>
         <div className="flex justify-end space-x-2">
           <Button type="button" variant="ghost" onClick={() => setGameToDelete(null)}>
             Cancel
           </Button>
           <Button onClick={confirmDeleteGame} variant="danger">
-            Delete Game
+            {gameToDelete?.status === "completed" &&
+            gameSessions.find((g) => g.id === gameToDelete.id)?.isOwner === false
+              ? "Remove from Dashboard"
+              : "Delete Game"}
           </Button>
         </div>
       </Modal>
