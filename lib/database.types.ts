@@ -85,6 +85,52 @@ export interface Database {
           updated_at?: string
         }
       }
+      friendships: {
+        Row: {
+          id: string
+          user_id: string
+          friend_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          friend_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          friend_id?: string
+          created_at?: string
+        }
+      }
+      friend_requests: {
+        Row: {
+          id: string
+          sender_id: string
+          receiver_id: string
+          status: "pending" | "accepted" | "declined"
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          sender_id: string
+          receiver_id: string
+          status?: "pending" | "accepted" | "declined"
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          sender_id?: string
+          receiver_id?: string
+          status?: "pending" | "accepted" | "declined"
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -94,6 +140,18 @@ export interface Database {
         Args: {
           user_id_param: string
           profit_loss_amount: number
+        }
+        Returns: void
+      }
+      accept_friend_request: {
+        Args: {
+          request_id: string
+        }
+        Returns: void
+      }
+      remove_friendship: {
+        Args: {
+          friend_user_id: string
         }
         Returns: void
       }

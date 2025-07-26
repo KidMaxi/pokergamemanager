@@ -133,7 +133,7 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
               <span className="sm:hidden">Poker Manager</span>
             </button>
 
-            <div className="flex items-center space-x-2 sm:space-x-4">
+            <div className="flex items-center space-x-1 sm:space-x-2">
               <button
                 onClick={() => setCurrentView("dashboard")}
                 className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
@@ -143,6 +143,17 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
                 }`}
               >
                 Dashboard
+              </button>
+
+              <button
+                onClick={() => setCurrentView("friends")}
+                className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                  activeView === "friends"
+                    ? "bg-brand-primary text-white"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                Friends
               </button>
 
               {user && (

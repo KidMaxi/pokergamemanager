@@ -40,7 +40,7 @@ export interface GameSession {
   currentPhysicalPointsOnTable: number
 }
 
-export type View = "dashboard" | "activeGame"
+export type View = "dashboard" | "activeGame" | "friends"
 
 export interface GameResult {
   gameId: string
@@ -55,4 +55,35 @@ export interface GameResult {
     totalCashOut: number
     netProfitLoss: number
   }[]
+}
+
+// Friends system types
+export interface FriendRequest {
+  id: string
+  sender_id: string
+  receiver_id: string
+  status: "pending" | "accepted" | "declined"
+  created_at: string
+  updated_at: string
+  sender_profile?: {
+    full_name: string | null
+    email: string
+  }
+  receiver_profile?: {
+    full_name: string | null
+    email: string
+  }
+}
+
+export interface Friendship {
+  id: string
+  user_id: string
+  friend_id: string
+  created_at: string
+  friend_profile?: {
+    full_name: string | null
+    email: string
+    all_time_profit_loss: number
+    games_played: number
+  }
 }

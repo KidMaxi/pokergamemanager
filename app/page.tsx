@@ -17,6 +17,7 @@ import Navbar from "../components/Navbar"
 import PlayerManagement from "../components/PlayerManagement"
 import GameDashboard from "../components/GameDashboard"
 import ActiveGameScreen from "../components/ActiveGameScreen"
+import FriendsPage from "../components/FriendsPage"
 import PWAInstall from "../components/PWAInstall"
 import AuthModal from "../components/auth/AuthModal"
 import EmailVerificationScreen from "../components/auth/EmailVerificationScreen"
@@ -427,6 +428,8 @@ export default function Home() {
 
     // Show main application views
     switch (currentView) {
+      case "friends":
+        return <FriendsPage />
       case "managePlayers":
         const playerManagementProps: PMPropsInternal = {
           players: [],
