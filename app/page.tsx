@@ -48,7 +48,7 @@ export default function Home() {
     try {
       setLoading(true)
 
-      // First, try to query with invited_users column, fallback if it doesn't exist
+      // Load games created by the user
       let sessionsData
       let sessionsError
 
@@ -56,7 +56,7 @@ export default function Home() {
         // Try with invited_users column first
         const result = await supabase
           .from("game_sessions")
-          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users")
+          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id")
           .eq("user_id", user!.id)
           .order("created_at", { ascending: false })
 
@@ -68,7 +68,7 @@ export default function Home() {
         // Fallback query without invited_users column
         const result = await supabase
           .from("game_sessions")
-          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data")
+          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, user_id")
           .eq("user_id", user!.id)
           .order("created_at", { ascending: false })
 
@@ -81,8 +81,46 @@ export default function Home() {
         throw new Error(`Database error: ${sessionsError.message}`)
       }
 
+      // Also load games where the user has accepted invitations
+      let invitedGamesData = []
+      try {
+        const { data: acceptedInvitations, error: invitationsError } = await supabase
+          .from("game_invitations")
+          .select(`
+          game_session_id,
+          game_session:game_sessions(
+            id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id
+          )
+        `)
+          .eq("invitee_id", user!.id)
+          .eq("status", "accepted")
+
+        if (!invitationsError && acceptedInvitations) {
+          invitedGamesData = acceptedInvitations.filter((inv) => inv.game_session).map((inv) => inv.game_session)
+        }
+      } catch (error) {
+        console.log("Game invitations not available yet, skipping invited games")
+      }
+
+      // Combine owned games and invited games, removing duplicates
+      const allGamesMap = new Map()
+
+      // Add owned games
+      sessionsData.forEach((session) => {
+        allGamesMap.set(session.id, { ...session, isOwner: true })
+      })
+
+      // Add invited games (don't override owned games)
+      invitedGamesData.forEach((session) => {
+        if (!allGamesMap.has(session.id)) {
+          allGamesMap.set(session.id, { ...session, isOwner: false })
+        }
+      })
+
+      const combinedSessions = Array.from(allGamesMap.values())
+
       // Transform database data to match our types with minimal processing
-      const transformedSessions: GameSession[] = sessionsData.map((session) => ({
+      const transformedSessions: GameSession[] = combinedSessions.map((session) => ({
         id: session.id,
         name: session.name,
         startTime: session.start_time,
@@ -93,6 +131,7 @@ export default function Home() {
         currentPhysicalPointsOnTable: 0, // Will be calculated from players_data
         playersInGame: session.players_data || [], // Load from JSONB column
         invitedUsers: session.invited_users || [], // Use empty array if column doesn't exist
+        isOwner: session.isOwner, // Track if user owns this game
       }))
 
       // Calculate current physical points for active games

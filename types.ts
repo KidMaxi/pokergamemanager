@@ -39,6 +39,7 @@ export interface GameSession {
   playersInGame: PlayerInGame[]
   currentPhysicalPointsOnTable: number
   invitedUsers?: string[]
+  isOwner?: boolean // Track if the current user owns this game
 }
 
 export type View = "dashboard" | "activeGame" | "friends"

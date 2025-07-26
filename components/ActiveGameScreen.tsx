@@ -780,9 +780,13 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   <p>Rate: {formatCurrency(session.pointToCashRate)}/pt</p>
                   <p>Buy-in: {formatCurrency(session.standardBuyInAmount)}</p>
                   <p className={`font-semibold ${currentStatusStyle.color}`}>Status: {currentStatusStyle.text}</p>
+                  {session.isOwner === false && (
+                    <p className="text-blue-400 font-semibold">You were invited to this game</p>
+                  )}
                 </div>
               </div>
-              {session.status === "active" && (
+              {/* Only show close game button for games the user owns */}
+              {session.status === "active" && session.isOwner !== false && (
                 <Button
                   onClick={handleInitiateCloseGame}
                   variant="danger"
@@ -812,7 +816,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </div>
       </Card>
 
-      {session.status === "pending_close" && (
+      {session.status === "pending_close" && session.isOwner !== false && (
         <>
           <Card className="mb-6 bg-yellow-800 border border-yellow-400">
             <h3 className="text-xl font-semibold text-white">Game Pending Closure</h3>
@@ -825,6 +829,16 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             Record Final Standings & Complete Game
           </Button>
         </>
+      )}
+
+      {session.status === "pending_close" && session.isOwner === false && (
+        <Card className="mb-6 bg-yellow-800 border border-yellow-400">
+          <h3 className="text-xl font-semibold text-white">Game Pending Closure</h3>
+          <p className="text-yellow-100 mt-2">
+            This game is being closed by the host. No more buy-ins are allowed. Wait for the host to finalize the
+            results.
+          </p>
+        </Card>
       )}
 
       {session.status === "active" && (

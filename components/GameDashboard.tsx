@@ -77,7 +77,12 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
       <div className="space-y-3">
         <div className="flex justify-between items-start">
           <div className="flex-1 min-w-0 pr-3">
-            <h4 className="text-base sm:text-lg font-semibold text-brand-primary truncate">{session.name}</h4>
+            <div className="flex items-center space-x-2">
+              <h4 className="text-base sm:text-lg font-semibold text-brand-primary truncate">{session.name}</h4>
+              {session.isOwner === false && (
+                <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded">Invited</span>
+              )}
+            </div>
             <div className="space-y-1 text-xs sm:text-sm text-text-secondary">
               <p>Started: {formatDate(session.startTime, false)}</p>
               <p>
@@ -97,14 +102,17 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
               )}
             </div>
           </div>
-          <Button
-            onClick={() => onConfirmDelete(session.id, session.name, session.status)}
-            variant="danger"
-            size="sm"
-            className="text-xs px-2 py-1 flex-shrink-0"
-          >
-            Delete
-          </Button>
+          {/* Only show delete button for games the user owns */}
+          {session.isOwner !== false && (
+            <Button
+              onClick={() => onConfirmDelete(session.id, session.name, session.status)}
+              variant="danger"
+              size="sm"
+              className="text-xs px-2 py-1 flex-shrink-0"
+            >
+              Delete
+            </Button>
+          )}
         </div>
         <Button
           onClick={() => onSelectGame(session.id)}
@@ -137,6 +145,72 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
     setError("")
 
     try {
+      // First, get the user's profile to use their name
+      const { data: userProfile, error: profileError } = await supabase
+        .from("profiles")
+        .select("full_name, email")
+        .eq("id", user.id)
+        .single()
+
+      if (profileError) {
+        throw new Error("Could not fetch user profile")
+      }
+
+      // Get the game session details
+      const { data: gameSession, error: gameError } = await supabase
+        .from("game_sessions")
+        .select("*")
+        .eq("id", invitation.game_session_id)
+        .single()
+
+      if (gameError || !gameSession) {
+        throw new Error("Could not fetch game session")
+      }
+
+      // Create a new player entry for the accepting user
+      const playerName = userProfile.full_name || userProfile.email || "Unknown User"
+      const standardBuyInAmount = gameSession.game_metadata?.standardBuyInAmount || 25
+      const pointToCashRate = gameSession.point_to_cash_rate || 0.1
+
+      const newPlayer = {
+        playerId: `invited-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: playerName,
+        pointStack: Math.floor(standardBuyInAmount / pointToCashRate),
+        buyIns: [
+          {
+            logId: `buyin-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            amount: standardBuyInAmount,
+            time: new Date().toISOString(),
+          },
+        ],
+        cashOutAmount: 0,
+        cashOutLog: [],
+        status: "active" as const,
+      }
+
+      // Get current players and add the new player
+      const currentPlayers = gameSession.players_data || []
+
+      // Check if user is already a player (by name matching)
+      const existingPlayer = currentPlayers.find((p: any) => p.name.toLowerCase() === playerName.toLowerCase())
+
+      let updatedPlayers = currentPlayers
+      if (!existingPlayer) {
+        updatedPlayers = [...currentPlayers, newPlayer]
+      }
+
+      // Update the game session with the new player
+      const { error: updateGameError } = await supabase
+        .from("game_sessions")
+        .update({
+          players_data: updatedPlayers,
+        })
+        .eq("id", invitation.game_session_id)
+
+      if (updateGameError) {
+        throw updateGameError
+      }
+
       // Update the invitation status to accepted
       const { error: updateError } = await supabase
         .from("game_invitations")
