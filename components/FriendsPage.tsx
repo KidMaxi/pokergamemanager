@@ -465,7 +465,7 @@ const FriendsPage: React.FC = () => {
                       <Button onClick={() => handleAcceptRequest(request.id)} variant="primary" size="sm">
                         Accept
                       </Button>
-                      <Button onClick={() => handleDeclineRequest(request.id)} variant="ghost" size="sm">
+                      <Button onClick={() => handleDeclineRequest(request.id)} variant="danger" size="sm">
                         Decline
                       </Button>
                     </div>

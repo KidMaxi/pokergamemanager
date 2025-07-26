@@ -292,7 +292,7 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
           <Button onClick={handleAccept} variant="primary" size="sm" disabled={acceptLoading}>
             {acceptLoading ? "Accepting..." : "Accept"}
           </Button>
-          <Button onClick={handleDecline} variant="ghost" size="sm" disabled={declineLoading}>
+          <Button onClick={handleDecline} variant="danger" size="sm" disabled={declineLoading}>
             {declineLoading ? "Declining..." : "Decline"}
           </Button>
         </div>
