@@ -117,7 +117,7 @@ export default function Home() {
     }
   }
 
-  // Replace the existing useEffect with this improved version:
+  // Simple useEffect without problematic refresh logic
   useEffect(() => {
     if (user && !authLoading) {
       // First check if we can connect to the database
