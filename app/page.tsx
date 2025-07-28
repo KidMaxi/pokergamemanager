@@ -153,6 +153,12 @@ export default function Home() {
       alert("Unable to load your games. Please try refreshing the page.")
     } finally {
       setLoading(false)
+      // Restore current view from localStorage after refresh
+      const savedView = localStorage.getItem("poker-current-view")
+      if (savedView && (savedView === "friends" || savedView === "dashboard")) {
+        setCurrentView(savedView as View)
+        localStorage.removeItem("poker-current-view") // Clean up
+      }
     }
   }
 

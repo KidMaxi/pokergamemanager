@@ -133,6 +133,8 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
     try {
       // Small delay to show the refresh animation
       await new Promise((resolve) => setTimeout(resolve, 500))
+      // Store current view in localStorage before refresh
+      localStorage.setItem("poker-current-view", activeView)
       // Reload the page while preserving authentication
       window.location.reload()
     } catch (error) {
