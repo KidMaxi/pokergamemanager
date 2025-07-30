@@ -38,7 +38,7 @@ interface PlayerGameCardProps {
   onDeleteBuyIn: (buyInLogId: string) => void
   gameStatus: GameSession["status"]
   currentPhysicalPointsOnTable: number
-  isGameOwner: boolean // Add this prop to control permissions
+  isGameOwner: boolean
 }
 
 const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
@@ -180,7 +180,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
   const [isCashOutModalOpen, setIsCashOutModalOpen] = useState(false)
   const [cashOutPlayerId, setCashOutPlayerId] = useState<string | null>(null)
-  const [cashOutPointAmount, setCashOutPointAmount] = useState<number>(0)
+  const [cashOutPointAmount, setCashOutPointAmount] = useState<string>("")
 
   // Buy-in editing states
   const [isEditBuyInModalOpen, setIsEditBuyInModalOpen] = useState(false)
@@ -529,8 +529,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     const player = session.playersInGame.find((p) => p.playerId === playerId)
     if (player && player.status === "active") {
       setCashOutPlayerId(playerId)
-      // Set default to 0 - player can choose how much to cash out
-      setCashOutPointAmount(0)
+      setCashOutPointAmount("")
       setIsCashOutModalOpen(true)
       setFormError("")
     } else {
@@ -539,8 +538,9 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const handleCashOut = () => {
-    const finalCashOutAmount = isNaN(cashOutPointAmount) ? 0 : cashOutPointAmount
-    if (!cashOutPlayerId || finalCashOutAmount < 0) {
+    const cashOutPoints = cashOutPointAmount === "" ? 0 : Number.parseInt(cashOutPointAmount, 10)
+
+    if (isNaN(cashOutPoints) || cashOutPoints < 0) {
       setFormError("Invalid point amount to cash out. Must be 0 or greater.")
       return
     }
@@ -552,15 +552,15 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     }
 
     // Allow cash out up to total points on table (including 0 for leaving with nothing)
-    if (finalCashOutAmount > session.currentPhysicalPointsOnTable) {
+    if (cashOutPoints > session.currentPhysicalPointsOnTable) {
       setFormError(`Cannot cash out more than ${session.currentPhysicalPointsOnTable} points (total points on table).`)
       return
     }
 
-    const cashValue = finalCashOutAmount * session.pointToCashRate
+    const cashValue = cashOutPoints * session.pointToCashRate
     const newCashOutLogEntry: CashOutLogRecord = {
       logId: generateLogId(),
-      pointsCashedOut: finalCashOutAmount,
+      pointsCashedOut: cashOutPoints,
       cashValue: cashValue,
       time: new Date().toISOString(),
     }
@@ -578,11 +578,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             }
           : p,
       ),
-      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable - finalCashOutAmount,
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable - cashOutPoints,
     }
     onUpdateSession(updatedSession)
     setIsCashOutModalOpen(false)
     setCashOutPlayerId(null)
+    setCashOutPointAmount("")
     setFormError("")
   }
 
@@ -607,7 +608,13 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const openFinalizeResultsModal = () => {
-    setPhysicalPointsForFinalize(session.currentPhysicalPointsOnTable)
+    // Calculate the correct physical points on table (only active players)
+    const activePlayersPoints = session.playersInGame
+      .filter((p) => p.status === "active")
+      .reduce((sum, p) => sum + p.pointStack, 0)
+
+    setPhysicalPointsForFinalize(activePlayersPoints)
+
     const activePlayersInputs = session.playersInGame
       .filter((p) => p.status === "active")
       .map((p) => ({
@@ -1312,7 +1319,10 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           {/* Cash Out Modal */}
           <Modal
             isOpen={isCashOutModalOpen}
-            onClose={() => setIsCashOutModalOpen(false)}
+            onClose={() => {
+              setIsCashOutModalOpen(false)
+              setCashOutPointAmount("")
+            }}
             title={`Cash out & Leave for ${session.playersInGame.find((p) => p.playerId === cashOutPlayerId)?.name || ""}`}
           >
             <div className="space-y-4">
@@ -1321,12 +1331,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                 id="cashOutPointAmount"
                 type="number"
                 value={cashOutPointAmount}
-                onChange={(e) =>
-                  setCashOutPointAmount(e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10) || 0)
-                }
+                onChange={(e) => setCashOutPointAmount(e.target.value)}
                 min="0"
                 step="1"
                 max={session.currentPhysicalPointsOnTable}
+                placeholder="Enter points to cash out"
               />
               <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
                 <p className="text-blue-200 text-sm">
@@ -1338,10 +1347,10 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               <p className="text-sm text-text-secondary">
                 This player will receive:{" "}
                 <span className="text-white font-semibold">
-                  {formatCurrency(cashOutPointAmount * session.pointToCashRate)}
+                  {formatCurrency((Number.parseInt(cashOutPointAmount) || 0) * session.pointToCashRate)}
                 </span>{" "}
                 and will be marked as 'Cashed Out Early'.
-                {cashOutPointAmount === 0 && (
+                {cashOutPointAmount === "0" && (
                   <span className="block text-yellow-300 mt-1">
                     <strong>Note:</strong> Player is leaving with $0.00 (busted out).
                   </span>
@@ -1349,13 +1358,24 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               </p>
               {formError && <p className="text-sm text-red-500">{formError}</p>}
               <div className="flex justify-end space-x-2">
-                <Button type="button" variant="ghost" onClick={() => setIsCashOutModalOpen(false)}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsCashOutModalOpen(false)
+                    setCashOutPointAmount("")
+                  }}
+                >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleCashOut}
                   variant="primary"
-                  disabled={cashOutPointAmount < 0 || cashOutPointAmount > session.currentPhysicalPointsOnTable}
+                  disabled={
+                    cashOutPointAmount === "" ||
+                    Number.parseInt(cashOutPointAmount) < 0 ||
+                    Number.parseInt(cashOutPointAmount) > session.currentPhysicalPointsOnTable
+                  }
                 >
                   Confirm Cash Out & Player Leaves
                 </Button>
