@@ -578,9 +578,9 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       return
     }
 
-    // Allow cash out up to player's current point stack
-    if (cashOutPoints > player.pointStack) {
-      setFormError(`Cannot cash out more than ${player.pointStack} points (player's current stack).`)
+    // Allow cash out up to total physical points on table
+    if (cashOutPoints > session.currentPhysicalPointsOnTable) {
+      setFormError(`Cannot cash out more than ${session.currentPhysicalPointsOnTable} points (total points on table).`)
       return
     }
 
@@ -1442,7 +1442,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                 <p className="text-blue-200 text-sm">
                   <strong>Cash Out Rules:</strong> Players can cash out any amount from 0 to{" "}
                   <span className="text-white font-semibold">{session.currentPhysicalPointsOnTable} points</span> (total
-                  points on table). Enter 0 if the player is leaving with no money.
+                  points on table). This allows players to cash out more than their own stack if they won chips from
+                  other players. Enter 0 if the player is leaving with no money.
                 </p>
               </div>
               <p className="text-sm text-text-secondary">
