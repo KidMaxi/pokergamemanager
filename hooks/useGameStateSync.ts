@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from "react"
 import type { GameSession } from "../types"
 import { GameStateManager } from "../utils/gameStateManager"
+import { GameStateValidator } from "../utils/gameStateValidator"
 
 interface UseGameStateSyncOptions {
   sessions: GameSession[]
@@ -11,143 +12,167 @@ interface UseGameStateSyncOptions {
   enableVisibilitySync?: boolean
 }
 
+interface GameStateSyncReturn {
+  forceSync: () => void
+  saveState: () => void
+  loadState: () => GameSession[]
+  clearState: () => void
+  getRefreshCount: () => number
+  getDiagnostics: () => any
+}
+
 export function useGameStateSync({
   sessions,
   onSessionsUpdate,
-  autoSaveInterval = 30000, // 30 seconds
+  autoSaveInterval = 30000,
   enableVisibilitySync = true,
-}: UseGameStateSyncOptions) {
-  const lastSaveRef = useRef<string>("")
-  const autoSaveIntervalRef = useRef<NodeJS.Timeout>()
-  const refreshCountRef = useRef(0)
+}: UseGameStateSyncOptions): GameStateSyncReturn {
+  const lastSaveHash = useRef<string>("")
+  const refreshCountRef = useRef<number>(0)
+  const autoSaveIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Generate a hash of the sessions for comparison
+  // Generate hash for sessions to detect changes
   const generateSessionsHash = useCallback((sessions: GameSession[]): string => {
-    return JSON.stringify(
-      sessions.map((s) => ({
-        id: s.id,
-        status: s.status,
-        playersInGame: s.playersInGame.map((p) => ({
-          playerId: p.playerId,
-          pointStack: p.pointStack,
-          cashOutAmount: p.cashOutAmount,
-          status: p.status,
-          pointsLeftOnTable: p.pointsLeftOnTable,
-        })),
-        currentPhysicalPointsOnTable: s.currentPhysicalPointsOnTable,
-      })),
-    )
+    return JSON.stringify(sessions.map((s) => ({ id: s.id, status: s.status, playersInGame: s.playersInGame })))
   }, [])
 
-  // Save sessions to localStorage when they change
-  const saveSessionsToStorage = useCallback(
-    (sessions: GameSession[]) => {
-      const currentHash = generateSessionsHash(sessions)
+  // Save state to localStorage
+  const saveState = useCallback(() => {
+    const currentHash = generateSessionsHash(sessions)
+    if (currentHash !== lastSaveHash.current) {
+      try {
+        // Validate sessions before saving
+        const validatedSessions = sessions.map((session) => {
+          const validation = GameStateValidator.validateSession(session)
+          if (!validation.isValid) {
+            console.warn(`Session ${session.name} has validation issues:`, validation.errors)
+            return GameStateValidator.repairSession(session)
+          }
+          return session
+        })
 
-      // Only save if data has actually changed
-      if (currentHash !== lastSaveRef.current) {
-        GameStateManager.saveGameState(sessions)
-        lastSaveRef.current = currentHash
-        console.log("Sessions saved to storage due to changes")
+        GameStateManager.saveGameState(validatedSessions)
+        lastSaveHash.current = currentHash
+        console.log("Game state auto-saved", { sessionCount: validatedSessions.length })
+      } catch (error) {
+        console.error("Failed to auto-save game state:", error)
       }
-    },
-    [generateSessionsHash],
-  )
+    }
+  }, [sessions, generateSessionsHash])
 
-  // Load sessions from localStorage
-  const loadSessionsFromStorage = useCallback(() => {
-    const loadedSessions = GameStateManager.loadGameState()
+  // Load state from localStorage
+  const loadState = useCallback((): GameSession[] => {
+    try {
+      const loadedSessions = GameStateManager.loadGameState()
+      console.log("Game state loaded from storage", { sessionCount: loadedSessions.length })
+      return loadedSessions
+    } catch (error) {
+      console.error("Failed to load game state:", error)
+      return []
+    }
+  }, [])
+
+  // Force sync - load from storage and update state
+  const forceSync = useCallback(() => {
+    const loadedSessions = loadState()
     if (loadedSessions.length > 0) {
       onSessionsUpdate(loadedSessions)
-      console.log("Sessions loaded from storage")
+      console.log("Forced sync completed", { sessionCount: loadedSessions.length })
     }
-  }, [onSessionsUpdate])
+  }, [loadState, onSessionsUpdate])
 
-  // Handle page visibility change (user switches tabs or returns)
-  const handleVisibilityChange = useCallback(() => {
-    if (document.visibilityState === "visible" && enableVisibilitySync) {
-      // User returned to tab, check for updates
-      console.log("Page became visible, checking for state updates")
-      loadSessionsFromStorage()
-    } else if (document.visibilityState === "hidden") {
-      // User left tab, save current state
-      console.log("Page became hidden, saving current state")
-      saveSessionsToStorage(sessions)
-    }
-  }, [sessions, saveSessionsToStorage, loadSessionsFromStorage, enableVisibilitySync])
+  // Clear all stored state
+  const clearState = useCallback(() => {
+    GameStateManager.clearAllData()
+    lastSaveHash.current = ""
+    console.log("Game state cleared")
+  }, [])
 
-  // Handle page refresh/beforeunload
-  const handleBeforeUnload = useCallback(() => {
-    console.log("Page unloading, saving final state")
-    saveSessionsToStorage(sessions)
-  }, [sessions, saveSessionsToStorage])
+  // Get refresh count
+  const getRefreshCount = useCallback(() => {
+    return refreshCountRef.current
+  }, [])
 
-  // Track refresh frequency
-  const trackRefresh = useCallback(() => {
-    refreshCountRef.current += 1
-    const refreshData = {
-      count: refreshCountRef.current,
-      timestamp: new Date().toISOString(),
-      sessionsCount: sessions.length,
-    }
-    localStorage.setItem("poker-refresh-tracking", JSON.stringify(refreshData))
-
-    if (refreshCountRef.current > 5) {
-      console.warn("High refresh frequency detected", refreshData)
+  // Get diagnostics
+  const getDiagnostics = useCallback(() => {
+    return {
+      ...GameStateManager.getDiagnostics(),
+      refreshCount: refreshCountRef.current,
+      lastSaveHash: lastSaveHash.current,
+      currentSessionsCount: sessions.length,
     }
   }, [sessions.length])
 
-  // Initialize on mount
+  // Track page refreshes
   useEffect(() => {
-    trackRefresh()
-    loadSessionsFromStorage()
-  }, []) // Only run on mount
-
-  // Save sessions when they change
-  useEffect(() => {
-    if (sessions.length > 0) {
-      saveSessionsToStorage(sessions)
+    const handleBeforeUnload = () => {
+      refreshCountRef.current += 1
+      localStorage.setItem("poker-refresh-count", refreshCountRef.current.toString())
+      saveState() // Save before page unload
     }
-  }, [sessions, saveSessionsToStorage])
 
-  // Set up auto-save interval
+    // Load refresh count on mount
+    const storedRefreshCount = localStorage.getItem("poker-refresh-count")
+    if (storedRefreshCount) {
+      refreshCountRef.current = Number.parseInt(storedRefreshCount, 10) || 0
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
+  }, [saveState])
+
+  // Auto-save interval
   useEffect(() => {
     if (autoSaveInterval > 0) {
-      autoSaveIntervalRef.current = setInterval(() => {
-        if (sessions.length > 0) {
-          console.log("Auto-saving sessions")
-          saveSessionsToStorage(sessions)
-        }
-      }, autoSaveInterval)
-
+      autoSaveIntervalRef.current = setInterval(saveState, autoSaveInterval)
       return () => {
         if (autoSaveIntervalRef.current) {
           clearInterval(autoSaveIntervalRef.current)
         }
       }
     }
-  }, [sessions, autoSaveInterval, saveSessionsToStorage])
+  }, [saveState, autoSaveInterval])
 
-  // Set up event listeners
+  // Visibility change sync
   useEffect(() => {
-    if (enableVisibilitySync) {
-      document.addEventListener("visibilitychange", handleVisibilityChange)
-    }
-    window.addEventListener("beforeunload", handleBeforeUnload)
+    if (!enableVisibilitySync) return
 
-    return () => {
-      if (enableVisibilitySync) {
-        document.removeEventListener("visibilitychange", handleVisibilityChange)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // Page became visible - potentially sync state
+        console.log("Page became visible, checking for state sync")
+        const loadedSessions = loadState()
+        const currentHash = generateSessionsHash(sessions)
+        const loadedHash = generateSessionsHash(loadedSessions)
+
+        if (loadedHash !== currentHash && loadedSessions.length > 0) {
+          console.log("State mismatch detected, syncing from storage")
+          onSessionsUpdate(loadedSessions)
+        }
+      } else {
+        // Page became hidden - save current state
+        saveState()
       }
-      window.removeEventListener("beforeunload", handleBeforeUnload)
     }
-  }, [handleVisibilityChange, handleBeforeUnload, enableVisibilitySync])
 
-  // Return utility functions
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
+  }, [enableVisibilitySync, loadState, saveState, sessions, generateSessionsHash, onSessionsUpdate])
+
+  // Save state when sessions change
+  useEffect(() => {
+    if (sessions.length > 0) {
+      const timeoutId = setTimeout(saveState, 1000) // Debounce saves
+      return () => clearTimeout(timeoutId)
+    }
+  }, [sessions, saveState])
+
   return {
-    forceSync: loadSessionsFromStorage,
-    forceSave: () => saveSessionsToStorage(sessions),
-    getDiagnostics: GameStateManager.getDiagnostics,
-    getRefreshCount: () => refreshCountRef.current,
+    forceSync,
+    saveState,
+    loadState,
+    clearState,
+    getRefreshCount,
+    getDiagnostics,
   }
 }

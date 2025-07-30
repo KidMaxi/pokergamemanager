@@ -1,5 +1,6 @@
 "use client"
 
+import type React from "react"
 import { useState, useEffect } from "react"
 import type { GameSession } from "../../types"
 import { GameStateManager } from "../../utils/gameStateManager"
@@ -12,185 +13,161 @@ interface GameStateDebugPanelProps {
   onSessionsUpdate: (sessions: GameSession[]) => void
 }
 
-export default function GameStateDebugPanel({ sessions, onSessionsUpdate }: GameStateDebugPanelProps) {
+const GameStateDebugPanel: React.FC<GameStateDebugPanelProps> = ({ sessions, onSessionsUpdate }) => {
+  const [isOpen, setIsOpen] = useState(false)
   const [diagnostics, setDiagnostics] = useState<any>(null)
   const [validationResults, setValidationResults] = useState<any[]>([])
-  const [refreshTracking, setRefreshTracking] = useState<any>(null)
-  const [isVisible, setIsVisible] = useState(false)
+  const [refreshCount, setRefreshCount] = useState(0)
 
+  // Update diagnostics periodically
   useEffect(() => {
+    const updateDiagnostics = () => {
+      const diag = GameStateManager.getDiagnostics()
+      const refreshCountStored = localStorage.getItem("poker-refresh-count")
+      setDiagnostics(diag)
+      setRefreshCount(Number.parseInt(refreshCountStored || "0", 10))
+
+      // Validate all sessions
+      const results = sessions.map((session) => ({
+        sessionId: session.id,
+        sessionName: session.name,
+        validation: GameStateValidator.validateSession(session),
+      }))
+      setValidationResults(results)
+    }
+
     updateDiagnostics()
-    loadRefreshTracking()
+    const interval = setInterval(updateDiagnostics, 5000)
+    return () => clearInterval(interval)
   }, [sessions])
 
-  const updateDiagnostics = () => {
-    setDiagnostics(GameStateManager.getDiagnostics())
-
-    // Validate all sessions
-    const results = sessions.map((session) => ({
-      sessionId: session.id,
-      sessionName: session.name,
-      validation: GameStateValidator.validateSession(session),
-    }))
-    setValidationResults(results)
-  }
-
-  const loadRefreshTracking = () => {
-    try {
-      const tracking = localStorage.getItem("poker-refresh-tracking")
-      if (tracking) {
-        setRefreshTracking(JSON.parse(tracking))
-      }
-    } catch (error) {
-      console.error("Failed to load refresh tracking:", error)
-    }
-  }
-
-  const handleRepairSessions = () => {
-    const repairedSessions = sessions.map((session) => {
-      const validation = GameStateValidator.validateSession(session)
-      return validation.repairedSession || session
-    })
-
+  const handleRepairAllSessions = () => {
+    const repairedSessions = sessions.map((session) => GameStateValidator.repairSession(session))
     onSessionsUpdate(repairedSessions)
-    GameStateManager.saveGameState(repairedSessions)
-    updateDiagnostics()
+    console.log("All sessions repaired")
   }
 
   const handleClearAllData = () => {
-    if (window.confirm("Are you sure you want to clear all game data? This cannot be undone.")) {
+    if (confirm("Are you sure you want to clear all stored game data? This cannot be undone.")) {
       GameStateManager.clearAllData()
-      localStorage.removeItem("poker-refresh-tracking")
-      onSessionsUpdate([])
-      updateDiagnostics()
-      setRefreshTracking(null)
+      localStorage.removeItem("poker-refresh-count")
+      setRefreshCount(0)
+      console.log("All data cleared")
     }
   }
 
-  const handleForceReload = () => {
+  const handleForceSync = () => {
     const loadedSessions = GameStateManager.loadGameState()
     onSessionsUpdate(loadedSessions)
-    updateDiagnostics()
+    console.log("Force sync completed")
   }
 
-  if (!isVisible) {
+  if (!isOpen) {
     return (
       <div className="fixed bottom-4 right-4 z-50">
         <Button
-          onClick={() => setIsVisible(true)}
-          variant="secondary"
+          onClick={() => setIsOpen(true)}
           size="sm"
-          className="bg-gray-800 text-white border border-gray-600"
+          variant="ghost"
+          className="bg-gray-800 text-white hover:bg-gray-700"
         >
-          Debug
+          🔧 Debug
         </Button>
       </div>
     )
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-slate-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-white">Game State Debug Panel</h2>
-            <Button onClick={() => setIsVisible(false)} variant="ghost" size="sm">
-              ✕
-            </Button>
+    <div className="fixed bottom-4 right-4 z-50 w-96 max-h-96 overflow-y-auto">
+      <Card className="bg-gray-900 border-gray-700 text-white">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold">Game State Debug</h3>
+          <Button onClick={() => setIsOpen(false)} size="sm" variant="ghost" className="text-white">
+            ✕
+          </Button>
+        </div>
+
+        <div className="space-y-4 text-sm">
+          {/* Refresh Tracking */}
+          <div>
+            <h4 className="font-semibold text-yellow-400">Refresh Tracking</h4>
+            <p>Page Refreshes: {refreshCount}</p>
+            <p>Current Sessions: {sessions.length}</p>
           </div>
 
           {/* Storage Diagnostics */}
-          <Card className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Storage Diagnostics</h3>
-            {diagnostics && (
-              <div className="space-y-2 text-sm">
-                <p className="text-gray-300">
-                  Main State: {diagnostics.hasMainState ? "✅" : "❌"}({diagnostics.mainStateSize} bytes)
-                </p>
-                <p className="text-gray-300">
-                  Backup: {diagnostics.hasBackup ? "✅" : "❌"}({diagnostics.backupStateSize} bytes)
-                </p>
-                <p className="text-gray-300">Last Save: {diagnostics.mainStateTimestamp || "Never"}</p>
-                <p className="text-gray-300">Backup Time: {diagnostics.backupStateTimestamp || "Never"}</p>
-              </div>
-            )}
-          </Card>
-
-          {/* Refresh Tracking */}
-          <Card className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Refresh Tracking</h3>
-            {refreshTracking ? (
-              <div className="space-y-2 text-sm">
-                <p className="text-gray-300">Refresh Count: {refreshTracking.count}</p>
-                <p className="text-gray-300">Last Refresh: {refreshTracking.timestamp}</p>
-                <p className="text-gray-300">Sessions at Last Refresh: {refreshTracking.sessionsCount}</p>
-                {refreshTracking.count > 5 && <p className="text-yellow-400">⚠️ High refresh frequency detected</p>}
-              </div>
-            ) : (
-              <p className="text-gray-400">No refresh tracking data</p>
-            )}
-          </Card>
+          {diagnostics && (
+            <div>
+              <h4 className="font-semibold text-blue-400">Storage Status</h4>
+              <p>Main State: {diagnostics.hasMainState ? "✓" : "✗"}</p>
+              <p>Backup: {diagnostics.hasBackup ? "✓" : "✗"}</p>
+              <p>Main Size: {diagnostics.mainStateSize} bytes</p>
+              {diagnostics.mainStateTimestamp && (
+                <p>Last Saved: {new Date(diagnostics.mainStateTimestamp).toLocaleTimeString()}</p>
+              )}
+            </div>
+          )}
 
           {/* Session Validation */}
-          <Card className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Session Validation</h3>
-            {validationResults.length > 0 ? (
-              <div className="space-y-4">
-                {validationResults.map((result, index) => (
-                  <div key={index} className="border border-gray-600 rounded p-3">
-                    <h4 className="font-medium text-white mb-2">
-                      {result.sessionName} ({result.sessionId})
-                    </h4>
-                    <p className={`text-sm mb-2 ${result.validation.isValid ? "text-green-400" : "text-red-400"}`}>
-                      Status: {result.validation.isValid ? "✅ Valid" : "❌ Invalid"}
-                    </p>
-
-                    {result.validation.errors.length > 0 && (
-                      <div className="mb-2">
-                        <p className="text-red-400 text-sm font-medium">Errors:</p>
-                        <ul className="text-red-300 text-xs ml-4">
-                          {result.validation.errors.map((error, i) => (
-                            <li key={i}>• {error}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {result.validation.warnings.length > 0 && (
-                      <div>
-                        <p className="text-yellow-400 text-sm font-medium">Warnings:</p>
-                        <ul className="text-yellow-300 text-xs ml-4">
-                          {result.validation.warnings.map((warning, i) => (
-                            <li key={i}>• {warning}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+          <div>
+            <h4 className="font-semibold text-green-400">Session Validation</h4>
+            {validationResults.length === 0 ? (
+              <p>No sessions to validate</p>
             ) : (
-              <p className="text-gray-400">No sessions to validate</p>
+              validationResults.map((result, index) => (
+                <div key={index} className="mb-2 p-2 bg-gray-800 rounded">
+                  <p className="font-medium">{result.sessionName}</p>
+                  <p className={result.validation.isValid ? "text-green-400" : "text-red-400"}>
+                    {result.validation.isValid ? "✓ Valid" : "✗ Invalid"}
+                  </p>
+                  {result.validation.errors.length > 0 && (
+                    <div className="text-red-400 text-xs">Errors: {result.validation.errors.length}</div>
+                  )}
+                  {result.validation.warnings.length > 0 && (
+                    <div className="text-yellow-400 text-xs">Warnings: {result.validation.warnings.length}</div>
+                  )}
+                </div>
+              ))
             )}
-          </Card>
+          </div>
 
-          {/* Actions */}
-          <div className="flex flex-wrap gap-3">
-            <Button onClick={updateDiagnostics} variant="secondary">
-              Refresh Diagnostics
+          {/* Action Buttons */}
+          <div className="space-y-2">
+            <Button onClick={handleForceSync} size="sm" variant="secondary" className="w-full">
+              Force Sync from Storage
             </Button>
-            <Button onClick={handleRepairSessions} variant="primary">
-              Repair Sessions
+            <Button onClick={handleRepairAllSessions} size="sm" variant="primary" className="w-full">
+              Repair All Sessions
             </Button>
-            <Button onClick={handleForceReload} variant="secondary">
-              Force Reload from Storage
-            </Button>
-            <Button onClick={handleClearAllData} variant="danger">
+            <Button onClick={handleClearAllData} size="sm" variant="danger" className="w-full">
               Clear All Data
             </Button>
           </div>
+
+          {/* Early Cashout Debug */}
+          <div>
+            <h4 className="font-semibold text-purple-400">Early Cashout Status</h4>
+            {sessions.map((session) => {
+              const activePlayers = session.playersInGame.filter((p) => p.status === "active").length
+              const cashedOutPlayers = session.playersInGame.filter((p) => p.status === "cashed_out_early").length
+              const canInviteFriends = session.status === "active" && session.isOwner !== false
+
+              return (
+                <div key={session.id} className="mb-2 p-2 bg-gray-800 rounded text-xs">
+                  <p className="font-medium">{session.name}</p>
+                  <p>Status: {session.status}</p>
+                  <p>Active Players: {activePlayers}</p>
+                  <p>Cashed Out: {cashedOutPlayers}</p>
+                  <p>Can Invite: {canInviteFriends ? "✓" : "✗"}</p>
+                  <p>Physical Points: {session.currentPhysicalPointsOnTable}</p>
+                </div>
+              )
+            })}
+          </div>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }
+
+export default GameStateDebugPanel

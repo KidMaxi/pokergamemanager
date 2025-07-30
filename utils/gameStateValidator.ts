@@ -1,29 +1,28 @@
 import type { GameSession, PlayerInGame } from "../types"
 
-export interface ValidationResult {
+export interface GameStateValidationResult {
   isValid: boolean
   errors: string[]
   warnings: string[]
-  repairedSession?: GameSession
+  repaired: boolean
 }
 
 export class GameStateValidator {
   /**
-   * Comprehensive validation of a game session
+   * Validate a complete game session
    */
-  static validateSession(session: GameSession): ValidationResult {
+  static validateSession(session: GameSession): GameStateValidationResult {
     const errors: string[] = []
     const warnings: string[] = []
-    const repairedSession = { ...session }
+    let repaired = false
 
-    // Basic field validation
+    // Basic session validation
     if (!session.id) {
       errors.push("Session missing ID")
     }
 
-    if (!session.name) {
-      warnings.push("Session missing name")
-      repairedSession.name = "Unnamed Game"
+    if (!session.name || session.name.trim() === "") {
+      errors.push("Session missing or empty name")
     }
 
     if (!session.startTime) {
@@ -35,27 +34,26 @@ export class GameStateValidator {
     }
 
     if (session.standardBuyInAmount <= 0) {
-      warnings.push("Invalid standard buy-in amount")
-      repairedSession.standardBuyInAmount = 25
+      errors.push("Invalid standard buy-in amount")
     }
 
     // Validate players
-    const playerValidation = this.validatePlayers(session.playersInGame)
+    const playerValidation = this.validatePlayers(session.playersInGame, session.pointToCashRate)
     errors.push(...playerValidation.errors)
     warnings.push(...playerValidation.warnings)
-    repairedSession.playersInGame = playerValidation.repairedPlayers
 
     // Validate physical points calculation
-    const pointsValidation = this.validatePhysicalPoints(repairedSession)
-    if (!pointsValidation.isValid) {
-      warnings.push(
-        `Physical points mismatch: stored=${session.currentPhysicalPointsOnTable}, calculated=${pointsValidation.calculatedPoints}`,
-      )
-      repairedSession.currentPhysicalPointsOnTable = pointsValidation.calculatedPoints
+    const physicalPointsValidation = this.validatePhysicalPoints(session)
+    if (!physicalPointsValidation.isValid) {
+      errors.push(...physicalPointsValidation.errors)
+      warnings.push(...physicalPointsValidation.warnings)
+      if (physicalPointsValidation.repaired) {
+        repaired = true
+      }
     }
 
     // Validate financial consistency
-    const financialValidation = this.validateFinancialConsistency(repairedSession)
+    const financialValidation = this.validateFinancialConsistency(session)
     errors.push(...financialValidation.errors)
     warnings.push(...financialValidation.warnings)
 
@@ -63,154 +61,240 @@ export class GameStateValidator {
       isValid: errors.length === 0,
       errors,
       warnings,
-      repairedSession: errors.length === 0 ? repairedSession : undefined,
+      repaired,
     }
   }
 
   /**
-   * Validate all players in a session
+   * Validate all players in a game
    */
-  private static validatePlayers(players: PlayerInGame[]): {
-    errors: string[]
-    warnings: string[]
-    repairedPlayers: PlayerInGame[]
-  } {
+  static validatePlayers(players: PlayerInGame[], pointToCashRate: number): GameStateValidationResult {
     const errors: string[] = []
     const warnings: string[] = []
-    const repairedPlayers: PlayerInGame[] = []
 
     for (const player of players) {
-      const playerValidation = this.validatePlayer(player)
-      errors.push(...playerValidation.errors.map((e) => `Player ${player.name}: ${e}`))
-      warnings.push(...playerValidation.warnings.map((w) => `Player ${player.name}: ${w}`))
-
-      if (playerValidation.repairedPlayer) {
-        repairedPlayers.push(playerValidation.repairedPlayer)
+      const playerValidation = this.validatePlayer(player, pointToCashRate)
+      if (!playerValidation.isValid) {
+        errors.push(...playerValidation.errors.map((e) => `Player ${player.name}: ${e}`))
+        warnings.push(...playerValidation.warnings.map((w) => `Player ${player.name}: ${w}`))
       }
     }
 
-    return { errors, warnings, repairedPlayers }
+    // Check for duplicate player names
+    const playerNames = players.map((p) => p.name.toLowerCase())
+    const duplicateNames = playerNames.filter((name, index) => playerNames.indexOf(name) !== index)
+    if (duplicateNames.length > 0) {
+      errors.push(`Duplicate player names found: ${duplicateNames.join(", ")}`)
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      repaired: false,
+    }
   }
 
   /**
-   * Validate individual player data
+   * Validate a single player
    */
-  private static validatePlayer(player: PlayerInGame): {
-    errors: string[]
-    warnings: string[]
-    repairedPlayer?: PlayerInGame
-  } {
+  static validatePlayer(player: PlayerInGame, pointToCashRate: number): GameStateValidationResult {
     const errors: string[] = []
     const warnings: string[] = []
-    const repairedPlayer = { ...player }
 
     // Basic validation
     if (!player.playerId) {
       errors.push("Missing player ID")
     }
 
-    if (!player.name) {
-      warnings.push("Missing player name")
-      repairedPlayer.name = "Unknown Player"
+    if (!player.name || player.name.trim() === "") {
+      errors.push("Missing or empty player name")
     }
 
     if (player.pointStack < 0) {
-      warnings.push("Negative point stack")
-      repairedPlayer.pointStack = 0
+      errors.push("Negative point stack")
     }
 
     if (player.cashOutAmount < 0) {
-      warnings.push("Negative cash out amount")
-      repairedPlayer.cashOutAmount = 0
+      errors.push("Negative cash out amount")
     }
 
     // Validate buy-ins
     if (!player.buyIns || player.buyIns.length === 0) {
       errors.push("Player has no buy-ins")
     } else {
-      const totalBuyIn = player.buyIns.reduce((sum, buyIn) => sum + (buyIn.amount || 0), 0)
-      if (totalBuyIn <= 0) {
-        errors.push("Total buy-in amount is zero or negative")
+      for (const buyIn of player.buyIns) {
+        if (buyIn.amount <= 0) {
+          errors.push(`Invalid buy-in amount: ${buyIn.amount}`)
+        }
+        if (!buyIn.time) {
+          errors.push("Buy-in missing timestamp")
+        }
+      }
+    }
+
+    // Validate cash-out logs
+    for (const cashOut of player.cashOutLog) {
+      if (cashOut.pointsCashedOut < 0) {
+        errors.push(`Invalid cash-out points: ${cashOut.pointsCashedOut}`)
+      }
+      if (cashOut.cashValue < 0) {
+        errors.push(`Invalid cash-out value: ${cashOut.cashValue}`)
+      }
+      if (!cashOut.time) {
+        errors.push("Cash-out missing timestamp")
       }
     }
 
     // Validate early cashout logic
     if (player.status === "cashed_out_early") {
-      if (player.pointStack > 0) {
-        warnings.push("Cashed out player still has points in stack")
-        repairedPlayer.pointStack = 0
+      if (player.pointStack !== 0) {
+        warnings.push("Early cashout player should have 0 point stack")
       }
 
-      // Ensure pointsLeftOnTable is properly set
-      if (player.pointsLeftOnTable === undefined) {
-        // Calculate based on cash out log
-        const totalCashedOutPoints = player.cashOutLog.reduce((sum, log) => sum + log.pointsCashedOut, 0)
-        const totalBuyInPoints = player.buyIns.reduce((sum, buyIn) => sum + Math.floor(buyIn.amount / 1), 0) // Assuming 1:1 rate for calculation
-        repairedPlayer.pointsLeftOnTable = Math.max(0, totalBuyInPoints - totalCashedOutPoints)
-
-        if (repairedPlayer.pointsLeftOnTable > 0) {
-          warnings.push(`Calculated pointsLeftOnTable: ${repairedPlayer.pointsLeftOnTable}`)
-        }
+      // Validate pointsLeftOnTable
+      if (player.pointsLeftOnTable === undefined || player.pointsLeftOnTable < 0) {
+        warnings.push("Early cashout player missing or invalid pointsLeftOnTable")
       }
     }
 
+    // Validate point calculations
+    const totalBuyInPoints = player.buyIns.reduce((sum, buyIn) => {
+      return sum + Math.floor(buyIn.amount / pointToCashRate)
+    }, 0)
+
+    const totalCashOutPoints = player.cashOutLog.reduce((sum, cashOut) => {
+      return sum + cashOut.pointsCashedOut
+    }, 0)
+
+    const expectedRemainingPoints = totalBuyInPoints - totalCashOutPoints
+    if (player.status === "active" && Math.abs(player.pointStack - expectedRemainingPoints) > 1) {
+      warnings.push(`Point stack mismatch: expected ${expectedRemainingPoints}, actual ${player.pointStack}`)
+    }
+
     return {
+      isValid: errors.length === 0,
       errors,
       warnings,
-      repairedPlayer: errors.length === 0 ? repairedPlayer : undefined,
+      repaired: false,
     }
   }
 
   /**
    * Validate physical points calculation
    */
-  private static validatePhysicalPoints(session: GameSession): {
-    isValid: boolean
-    calculatedPoints: number
-  } {
-    let calculatedPoints = 0
+  static validatePhysicalPoints(session: GameSession): GameStateValidationResult {
+    const errors: string[] = []
+    const warnings: string[] = []
+    let repaired = false
+
+    if (session.status === "completed") {
+      // Completed games should have 0 physical points
+      if (session.currentPhysicalPointsOnTable !== 0) {
+        warnings.push("Completed game should have 0 physical points on table")
+      }
+      return { isValid: true, errors, warnings, repaired }
+    }
+
+    // Calculate expected physical points
+    let expectedPhysicalPoints = 0
 
     for (const player of session.playersInGame) {
       if (player.status === "active") {
-        calculatedPoints += player.pointStack
+        expectedPhysicalPoints += player.pointStack
       } else if (player.status === "cashed_out_early") {
-        calculatedPoints += player.pointsLeftOnTable || 0
+        expectedPhysicalPoints += player.pointsLeftOnTable || 0
       }
     }
 
+    // Check if current value matches expected
+    if (Math.abs(session.currentPhysicalPointsOnTable - expectedPhysicalPoints) > 0.01) {
+      warnings.push(
+        `Physical points mismatch: stored ${session.currentPhysicalPointsOnTable}, calculated ${expectedPhysicalPoints}`,
+      )
+      repaired = true
+    }
+
     return {
-      isValid: Math.abs(session.currentPhysicalPointsOnTable - calculatedPoints) < 0.01,
-      calculatedPoints,
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      repaired,
     }
   }
 
   /**
    * Validate financial consistency
    */
-  private static validateFinancialConsistency(session: GameSession): {
-    errors: string[]
-    warnings: string[]
-  } {
+  static validateFinancialConsistency(session: GameSession): GameStateValidationResult {
     const errors: string[] = []
     const warnings: string[] = []
 
-    const totalBuyIns = session.playersInGame.reduce(
-      (sum, player) => sum + player.buyIns.reduce((playerSum, buyIn) => playerSum + buyIn.amount, 0),
-      0,
-    )
+    const totalBuyIns = session.playersInGame.reduce((sum, player) => {
+      return sum + player.buyIns.reduce((playerSum, buyIn) => playerSum + buyIn.amount, 0)
+    }, 0)
 
-    const totalCashOuts = session.playersInGame.reduce((sum, player) => sum + player.cashOutAmount, 0)
+    const totalCashOuts = session.playersInGame.reduce((sum, player) => {
+      return sum + player.cashOutAmount
+    }, 0)
 
-    const remainingValue = session.currentPhysicalPointsOnTable * session.pointToCashRate
+    const totalPointsValue = session.currentPhysicalPointsOnTable * session.pointToCashRate
 
-    const totalAccountedValue = totalCashOuts + remainingValue
+    const expectedTotal = totalCashOuts + totalPointsValue
+    const difference = Math.abs(totalBuyIns - expectedTotal)
 
-    if (Math.abs(totalBuyIns - totalAccountedValue) > 0.01) {
+    if (difference > 0.01) {
       warnings.push(
-        `Financial mismatch: Buy-ins=$${totalBuyIns.toFixed(2)}, Accounted=$${totalAccountedValue.toFixed(2)}`,
+        `Financial inconsistency: Buy-ins ${totalBuyIns}, Cash-outs + Points Value ${expectedTotal}, Difference ${difference}`,
       )
     }
 
-    return { errors, warnings }
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      repaired: false,
+    }
+  }
+
+  /**
+   * Repair a session by fixing common issues
+   */
+  static repairSession(session: GameSession): GameSession {
+    const repairedSession = { ...session }
+
+    // Repair physical points calculation
+    let calculatedPhysicalPoints = 0
+    for (const player of repairedSession.playersInGame) {
+      if (player.status === "active") {
+        calculatedPhysicalPoints += player.pointStack
+      } else if (player.status === "cashed_out_early") {
+        calculatedPhysicalPoints += player.pointsLeftOnTable || 0
+      }
+    }
+
+    repairedSession.currentPhysicalPointsOnTable = calculatedPhysicalPoints
+
+    // Repair player data
+    repairedSession.playersInGame = repairedSession.playersInGame.map((player) => {
+      const repairedPlayer = { ...player }
+
+      // Ensure early cashout players have correct state
+      if (repairedPlayer.status === "cashed_out_early") {
+        if (repairedPlayer.pointStack !== 0) {
+          console.warn(`Repairing player ${player.name}: setting point stack to 0 for early cashout`)
+          repairedPlayer.pointStack = 0
+        }
+
+        if (repairedPlayer.pointsLeftOnTable === undefined) {
+          console.warn(`Repairing player ${player.name}: setting pointsLeftOnTable to 0`)
+          repairedPlayer.pointsLeftOnTable = 0
+        }
+      }
+
+      return repairedPlayer
+    })
+
+    return repairedSession
   }
 }

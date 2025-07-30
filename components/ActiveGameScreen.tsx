@@ -64,13 +64,21 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
         <div>
           <h5 className="text-lg sm:text-xl font-semibold text-brand-primary truncate">{playerInGame.name}</h5>
           {playerInGame.status === "cashed_out_early" && (
-            <p className="text-xs sm:text-sm text-yellow-400 font-semibold">Player Cashed Out</p>
+            <div className="space-y-1">
+              <p className="text-xs sm:text-sm text-yellow-400 font-semibold">Player Cashed Out Early</p>
+              {playerInGame.pointsLeftOnTable !== undefined && playerInGame.pointsLeftOnTable > 0 && (
+                <p className="text-xs text-orange-400">Left {playerInGame.pointsLeftOnTable} points on table</p>
+              )}
+            </div>
           )}
         </div>
 
         <div className="space-y-1 text-xs sm:text-sm">
           <p className="text-text-primary">
             Points: <span className="font-bold text-white">{playerInGame.pointStack}</span>
+            {playerInGame.status === "cashed_out_early" && playerInGame.pointsLeftOnTable !== undefined && (
+              <span className="text-orange-400 ml-2">(Left: {playerInGame.pointsLeftOnTable})</span>
+            )}
           </p>
           <p className="text-text-primary">
             Buy-ins: <span className="text-white">{formatCurrency(totalBuyInCash)}</span> ({playerInGame.buyIns.length})
@@ -208,6 +216,30 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
   // Check if current user is the game owner
   const isGameOwner = session.isOwner !== false
+
+  // Enhanced game state checks
+  const gameStateInfo = useMemo(() => {
+    const activePlayers = session.playersInGame.filter((p) => p.status === "active")
+    const cashedOutPlayers = session.playersInGame.filter((p) => p.status === "cashed_out_early")
+
+    // Game is considered "active" for invitations if:
+    // 1. Session status is "active"
+    // 2. User is the owner
+    // 3. There are still active players OR the game hasn't been closed yet
+    const canInviteFriends = session.status === "active" && isGameOwner
+    const canAddPlayers = session.status === "active" && isGameOwner
+    const canAddBuyIns = session.status === "active" && isGameOwner
+
+    return {
+      activePlayers,
+      cashedOutPlayers,
+      canInviteFriends,
+      canAddPlayers,
+      canAddBuyIns,
+      hasActivePlayers: activePlayers.length > 0,
+      hasCashedOutPlayers: cashedOutPlayers.length > 0,
+    }
+  }, [session.playersInGame, session.status, isGameOwner])
 
   const totalBuyInValueOverall = useMemo(() => {
     return session.playersInGame.reduce((sum, p) => sum + p.buyIns.reduce((s, b) => s + b.amount, 0), 0)
@@ -573,7 +605,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               cashOutAmount: p.cashOutAmount + cashValue,
               cashOutLog: [...p.cashOutLog, newCashOutLogEntry],
               status: "cashed_out_early" as const,
-              // Store the points left on table in the cash out log for persistence
+              // Store the points left on table for persistence and finalization
               pointsLeftOnTable: pointsRemainingOnTable,
             }
           : p,
@@ -581,6 +613,14 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       // Only subtract the points the player actually took, not their full stack
       currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable - cashOutPoints,
     }
+
+    console.log("Cash out completed:", {
+      playerName: player.name,
+      cashOutPoints,
+      pointsRemainingOnTable,
+      newPhysicalPoints: updatedSession.currentPhysicalPointsOnTable,
+    })
+
     onUpdateSession(updatedSession)
     setIsCashOutModalOpen(false)
     setCashOutPlayerId(null)
@@ -612,6 +652,13 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       .reduce((sum, p) => sum + (p.pointsLeftOnTable || 0), 0)
 
     const totalPhysicalPoints = activePlayersPoints + pointsLeftByEarlyCashouts
+
+    console.log("Finalize modal opened:", {
+      activePlayersPoints,
+      pointsLeftByEarlyCashouts,
+      totalPhysicalPoints,
+      sessionPhysicalPoints: session.currentPhysicalPointsOnTable,
+    })
 
     setPhysicalPointsForFinalize(totalPhysicalPoints)
 
@@ -800,6 +847,19 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   {session.isOwner === false && (
                     <p className="text-blue-400 font-semibold">You were invited to this game (Read-only)</p>
                   )}
+                  {/* Debug info for game state */}
+                  {process.env.NODE_ENV === "development" && (
+                    <div className="text-xs text-gray-400 mt-2 p-2 bg-gray-800 rounded">
+                      <p>
+                        Active: {gameStateInfo.activePlayers.length} | Cashed Out:{" "}
+                        {gameStateInfo.cashedOutPlayers.length}
+                      </p>
+                      <p>
+                        Can Invite: {gameStateInfo.canInviteFriends ? "✓" : "✗"} | Can Add:{" "}
+                        {gameStateInfo.canAddPlayers ? "✓" : "✗"}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
               {/* Only show close game button for games the user owns */}
@@ -859,8 +919,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </Card>
       )}
 
-      {/* Only show action buttons for game owners */}
-      {session.status === "active" && isGameOwner && (
+      {/* Enhanced action buttons - now properly check game state */}
+      {gameStateInfo.canAddPlayers && (
         <div className="mb-6 flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3">
           <Button
             onClick={() => {
@@ -873,19 +933,21 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           >
             Add New Player to Game
           </Button>
-          <Button
-            onClick={() => {
-              setIsInviteFriendsModalOpen(true)
-              setSelectedFriendsToInvite([])
-              setInviteError("")
-              setInviteSuccess("")
-              loadFriendsForInvitation()
-            }}
-            variant="secondary"
-            className="flex-1"
-          >
-            Add Friend to Game
-          </Button>
+          {gameStateInfo.canInviteFriends && (
+            <Button
+              onClick={() => {
+                setIsInviteFriendsModalOpen(true)
+                setSelectedFriendsToInvite([])
+                setInviteError("")
+                setInviteSuccess("")
+                loadFriendsForInvitation()
+              }}
+              variant="secondary"
+              className="flex-1"
+            >
+              Add Friend to Game
+            </Button>
+          )}
         </div>
       )}
 
@@ -900,12 +962,27 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </Card>
       )}
 
+      {/* Enhanced game state messaging */}
       {session.playersInGame.length === 0 && session.status === "active" && (
         <p className="text-text-secondary text-center">
           No players in this game yet.{" "}
           {isGameOwner ? "Add some players to start!" : "Wait for the host to add players."}
         </p>
       )}
+
+      {/* Show helpful message when all players have cashed out but game is still active */}
+      {gameStateInfo.hasCashedOutPlayers &&
+        !gameStateInfo.hasActivePlayers &&
+        session.status === "active" &&
+        isGameOwner && (
+          <Card className="mb-6 bg-orange-900/20 border border-orange-600">
+            <h3 className="text-lg font-semibold text-orange-200">All Players Cashed Out</h3>
+            <p className="text-orange-100 mt-2">
+              All players have cashed out early, but you can still add new players or invite friends to continue the
+              game. The points they left on the table ({session.currentPhysicalPointsOnTable} points) are still in play.
+            </p>
+          </Card>
+        )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
         {session.playersInGame.map((p) => (
@@ -966,6 +1043,21 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   Total Physical Points on Table to Account For:{" "}
                   <span className="text-white">{physicalPointsForFinalize}</span>
                 </p>
+
+                {/* Show breakdown of physical points */}
+                <div className="bg-slate-700 p-3 rounded-lg border text-xs">
+                  <p className="font-semibold mb-2">Physical Points Breakdown:</p>
+                  <div className="space-y-1">
+                    <p>
+                      Active Players: {gameStateInfo.activePlayers.reduce((sum, p) => sum + p.pointStack, 0)} points
+                    </p>
+                    <p>
+                      Left by Early Cashouts:{" "}
+                      {gameStateInfo.cashedOutPlayers.reduce((sum, p) => sum + (p.pointsLeftOnTable || 0), 0)} points
+                    </p>
+                    <p className="font-semibold border-t pt-1">Total: {physicalPointsForFinalize} points</p>
+                  </div>
+                </div>
 
                 {finalPointInputs.length > 0 ? (
                   finalPointInputs.map((input) => (
