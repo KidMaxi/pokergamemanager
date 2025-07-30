@@ -1034,19 +1034,19 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           >
             <div>
               <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
-                <p className="text-text-secondary text-sm">
+                <p className="text-white text-sm">
                   Enter the final point count for each <strong className="text-yellow-300">active</strong> player.
                   Players who already cashed out early are settled. The sum of these points must equal the total
                   physical points remaining on the table.
                 </p>
-                <p className="text-sm text-text-secondary font-semibold">
+                <p className="text-sm text-white font-semibold">
                   Total Physical Points on Table to Account For:{" "}
                   <span className="text-white">{physicalPointsForFinalize}</span>
                 </p>
 
                 {/* Show breakdown of physical points */}
                 <div className="bg-slate-700 p-3 rounded-lg border text-xs">
-                  <p className="font-semibold mb-2">Physical Points Breakdown:</p>
+                  <p className="font-semibold mb-2 text-white">Physical Points Breakdown:</p>
                   <div className="space-y-1">
                     <p>
                       Active Players: {gameStateInfo.activePlayers.reduce((sum, p) => sum + p.pointStack, 0)} points
@@ -1062,7 +1062,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                 {finalPointInputs.length > 0 ? (
                   finalPointInputs.map((input) => (
                     <div key={input.playerId} className="flex items-center justify-between">
-                      <label htmlFor={`final-points-${input.playerId}`} className="text-text-primary mr-2">
+                      <label htmlFor={`final-points-${input.playerId}`} className="text-white mr-2">
                         <span className="text-white">{input.name}</span> (Active):
                       </label>
                       <Input
@@ -1077,21 +1077,21 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-yellow-300">
+                  <p className="text-sm text-white">
                     No active players remaining to finalize, or all points have been cashed out.
                   </p>
                 )}
 
                 <div className="bg-slate-700 p-3 rounded-lg border">
-                  <p className="text-sm text-text-secondary font-semibold mb-2">Points Entered vs. Table Total:</p>
+                  <p className="text-sm text-white font-semibold mb-2">Points Entered vs. Table Total:</p>
                   <div className="flex justify-between items-center">
-                    <span className="text-text-secondary text-sm">
+                    <span className="text-white text-sm">
                       Points Entered:{" "}
                       <span className="text-white">
                         {finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)}
                       </span>
                     </span>
-                    <span className="text-text-secondary text-sm">
+                    <span className="text-white text-sm">
                       Table Total: <span className="text-white">{physicalPointsForFinalize}</span>
                     </span>
                   </div>
