@@ -13,6 +13,7 @@ import type {
 } from "../types"
 import { generateId, generateLogId } from "../utils"
 import { usePWA } from "../hooks/usePWA"
+import { useGameStateSync } from "../hooks/useGameStateSync"
 import Navbar from "../components/Navbar"
 import PlayerManagement from "../components/PlayerManagement"
 import GameDashboard from "../components/GameDashboard"
@@ -21,6 +22,7 @@ import FriendsPage from "../components/FriendsPage"
 import PWAInstall from "../components/PWAInstall"
 import AuthModal from "../components/auth/AuthModal"
 import EmailVerificationScreen from "../components/auth/EmailVerificationScreen"
+import GameStateDebugPanel from "../components/debug/GameStateDebugPanel"
 
 export default function Home() {
   const { user, loading: authLoading, emailVerified } = useAuth()
@@ -31,13 +33,21 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [profile, setProfile] = useState<any | null>(null)
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
 
   usePWA()
+
+  // Use game state sync hook for better refresh handling
+  const gameStateSync = useGameStateSync({
+    sessions: gameSessions,
+    onSessionsUpdate: setGameSessions,
+    autoSaveInterval: 30000, // Save every 30 seconds
+    enableVisibilitySync: true, // Sync when user switches tabs
+  })
 
   const checkConnection = async () => {
     try {
       const { data, error } = await supabase.from("profiles").select("id").limit(1).single()
-
       return !error
     } catch {
       return false
@@ -119,38 +129,48 @@ export default function Home() {
 
       const combinedSessions = Array.from(allGamesMap.values())
 
-      // Transform database data to match our types with minimal processing
-      const transformedSessions: GameSession[] = combinedSessions.map((session) => ({
-        id: session.id,
-        name: session.name,
-        startTime: session.start_time,
-        endTime: session.end_time,
-        status: session.status,
-        pointToCashRate: session.point_to_cash_rate,
-        standardBuyInAmount: 25, // Default value
-        currentPhysicalPointsOnTable: 0, // Will be calculated from players_data
-        playersInGame: session.players_data || [], // Load from JSONB column
-        invitedUsers: session.invited_users || [], // Use empty array if column doesn't exist
-        isOwner: session.isOwner, // Track if user owns this game
-      }))
-
-      // Calculate current physical points for active games
-      const updatedSessions = transformedSessions.map((session) => {
-        if (session.status === "active" || session.status === "pending_close") {
-          const totalPoints = session.playersInGame.reduce((sum, player) => {
-            return sum + (player.status === "active" ? player.pointStack : 0)
-          }, 0)
-          return { ...session, currentPhysicalPointsOnTable: totalPoints }
+      // Transform database data to match our types with enhanced validation
+      const transformedSessions: GameSession[] = combinedSessions.map((session) => {
+        const baseSession: GameSession = {
+          id: session.id,
+          name: session.name,
+          startTime: session.start_time,
+          endTime: session.end_time,
+          status: session.status,
+          pointToCashRate: session.point_to_cash_rate,
+          standardBuyInAmount: 25, // Default value
+          currentPhysicalPointsOnTable: 0, // Will be calculated
+          playersInGame: session.players_data || [], // Load from JSONB column
+          invitedUsers: session.invited_users || [], // Use empty array if column doesn't exist
+          isOwner: session.isOwner, // Track if user owns this game
         }
-        return session
+
+        // Calculate and validate physical points for active games
+        if (baseSession.status === "active" || baseSession.status === "pending_close") {
+          let calculatedPoints = 0
+
+          for (const player of baseSession.playersInGame) {
+            if (player.status === "active") {
+              calculatedPoints += player.pointStack || 0
+            } else if (player.status === "cashed_out_early") {
+              // Include points left on table by early cashout players
+              calculatedPoints += player.pointsLeftOnTable || 0
+            }
+          }
+
+          baseSession.currentPhysicalPointsOnTable = calculatedPoints
+        }
+
+        return baseSession
       })
 
-      setGameSessions(updatedSessions)
+      setGameSessions(transformedSessions)
     } catch (error) {
       console.error("Error loading user data:", error)
-      // Fallback: Load with empty data but still functional
-      setGameSessions([])
-      alert("Unable to load your games. Please try refreshing the page.")
+      // Fallback: Try to load from local storage
+      const localSessions = gameStateSync.forceSync ? [] : []
+      setGameSessions(localSessions)
+      alert("Unable to load your games from server. Loading local data if available.")
     } finally {
       setLoading(false)
       // Restore current view from localStorage after refresh
@@ -162,7 +182,7 @@ export default function Home() {
     }
   }
 
-  // Simple useEffect without problematic refresh logic
+  // Enhanced useEffect with better refresh handling
   useEffect(() => {
     if (user && !authLoading) {
       // First check if we can connect to the database
@@ -175,13 +195,21 @@ export default function Home() {
           } else {
             console.error("Database connection failed")
             setLoading(false)
-            alert("Database connection failed. Please check your internet connection and try refreshing the page.")
+            // Try to load from local storage as fallback
+            if (gameStateSync.forceSync) {
+              gameStateSync.forceSync()
+            }
+            alert("Database connection failed. Loading local data if available.")
           }
         })
         .catch((error) => {
           console.error("Connection check failed:", error)
           setLoading(false)
-          alert("Unable to verify database connection. Please try refreshing the page.")
+          // Try to load from local storage as fallback
+          if (gameStateSync.forceSync) {
+            gameStateSync.forceSync()
+          }
+          alert("Unable to verify database connection. Loading local data if available.")
         })
 
       // Safety timeout - force loading to false after 15 seconds
@@ -697,12 +725,18 @@ export default function Home() {
       {/* Only show footer if user is verified */}
       {user && emailVerified && (
         <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
-          Poker Homegame Manager V49 &copy; {new Date().getFullYear()}
+          Poker Homegame Manager V50 &copy; {new Date().getFullYear()}
         </footer>
       )}
 
       {/* Only show PWA install if user is verified */}
       {user && emailVerified && <PWAInstall />}
+
+      {/* Debug Panel - only show in development or for testing */}
+      {user && emailVerified && process.env.NODE_ENV === "development" && (
+        <GameStateDebugPanel sessions={gameSessions} onSessionsUpdate={setGameSessions} />
+      )}
+
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} initialMode="signin" />
     </div>
   )
