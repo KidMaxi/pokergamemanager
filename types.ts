@@ -26,6 +26,7 @@ export interface PlayerInGame {
   cashOutAmount: number
   cashOutLog: CashOutLogRecord[]
   status: "active" | "cashed_out_early"
+  pointsLeftOnTable?: number // Points left on table when cashing out early
 }
 
 export interface GameSession {
