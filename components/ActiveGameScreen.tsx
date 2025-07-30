@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import type { GameSession, PlayerInGame, Player, CashOutLogRecord, BuyInRecord, Friendship } from "../types"
 import {
   formatCurrency,
@@ -39,6 +39,11 @@ interface PlayerGameCardProps {
   gameStatus: GameSession["status"]
   currentPhysicalPointsOnTable: number
   isGameOwner: boolean
+  currentUserId?: string
+  friendRequestState?: "none" | "pending" | "friends"
+  onSendFriendRequest?: () => void
+  isLoadingFriendRequest?: boolean
+  hasUserProfile?: boolean
 }
 
 const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
@@ -51,6 +56,11 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
   gameStatus,
   currentPhysicalPointsOnTable,
   isGameOwner,
+  currentUserId,
+  friendRequestState,
+  onSendFriendRequest,
+  isLoadingFriendRequest,
+  hasUserProfile,
 }) => {
   const totalBuyInCash = playerInGame.buyIns.reduce((sum, b) => sum + b.amount, 0)
   const netProfitOrLoss =
@@ -62,7 +72,51 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
     <Card className={`mb-3 sm:mb-4 ${playerInGame.status === "cashed_out_early" ? "opacity-60 bg-slate-800" : ""}`}>
       <div className="space-y-3">
         <div>
-          <h5 className="text-lg sm:text-xl font-semibold text-brand-primary truncate">{playerInGame.name}</h5>
+          <div className="flex items-center justify-between">
+            <h5 className="text-lg sm:text-xl font-semibold text-brand-primary truncate">{playerInGame.name}</h5>
+            {/* Friend request button - only show for other players who aren't friends AND have user profiles */}
+            {currentUserId &&
+              playerInGame.name !== currentUserId &&
+              hasUserProfile &&
+              friendRequestState === "none" &&
+              onSendFriendRequest && (
+                <button
+                  onClick={onSendFriendRequest}
+                  disabled={isLoadingFriendRequest}
+                  className="ml-2 px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded transition-colors flex items-center space-x-1"
+                  title="Send Friend Request"
+                >
+                  {isLoadingFriendRequest ? (
+                    <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <>
+                      <span>👥</span>
+                      <span className="hidden sm:inline">Add Friend</span>
+                    </>
+                  )}
+                </button>
+              )}
+            {/* Show friend status indicators - only for players with profiles */}
+            {currentUserId &&
+              playerInGame.name !== currentUserId &&
+              hasUserProfile &&
+              friendRequestState === "friends" && (
+                <span className="ml-2 px-2 py-1 text-xs bg-green-600 text-white rounded" title="Already Friends">
+                  ✓ Friends
+                </span>
+              )}
+            {currentUserId &&
+              playerInGame.name !== currentUserId &&
+              hasUserProfile &&
+              friendRequestState === "pending" && (
+                <span
+                  className="ml-2 px-2 py-1 text-xs bg-yellow-600 text-white rounded"
+                  title="Friend Request Pending"
+                >
+                  ⏳ Pending
+                </span>
+              )}
+          </div>
           {playerInGame.status === "cashed_out_early" && (
             <div className="space-y-1">
               <p className="text-xs sm:text-sm text-yellow-400 font-semibold">Player Cashed Out Early</p>
@@ -182,6 +236,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const [inviteError, setInviteError] = useState("")
   const [inviteSuccess, setInviteSuccess] = useState("")
 
+  // Friend request states
+  const [friendRequestStates, setFriendRequestStates] = useState<Record<string, "none" | "pending" | "friends">>({})
+  const [loadingFriendRequests, setLoadingFriendRequests] = useState<Record<string, boolean>>({})
+  const [playersWithProfiles, setPlayersWithProfiles] = useState<Set<string>>(new Set())
+
   const [isBuyInModalOpen, setIsBuyInModalOpen] = useState(false)
   const [buyInPlayerId, setBuyInPlayerId] = useState<string | null>(null)
   const [buyInAmount, setBuyInAmount] = useState<number>(25)
@@ -300,6 +359,127 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     }
   }
 
+  // Load friend relationships for players in the game
+  const loadFriendRelationships = async () => {
+    if (!user) return
+
+    try {
+      // Get all player names from the game
+      const playerNames = session.playersInGame.map((p) => p.name)
+
+      // Get profiles for all players in the game (excluding current user)
+      const { data: playerProfiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("full_name", playerNames)
+        .neq("id", user.id)
+
+      if (profilesError || !playerProfiles) {
+        console.error("Error loading player profiles:", profilesError)
+        return
+      }
+
+      // Check existing friendships
+      const playerIds = playerProfiles.map((p) => p.id)
+      const { data: friendships, error: friendshipsError } = await supabase
+        .from("friendships")
+        .select("friend_id")
+        .eq("user_id", user.id)
+        .in("friend_id", playerIds)
+
+      if (friendshipsError) {
+        console.error("Error loading friendships:", friendshipsError)
+        return
+      }
+
+      // Check pending friend requests (both sent and received)
+      const { data: pendingRequests, error: requestsError } = await supabase
+        .from("friend_requests")
+        .select("sender_id, receiver_id")
+        .eq("status", "pending")
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .in("sender_id", [...playerIds, user.id])
+        .in("receiver_id", [...playerIds, user.id])
+
+      if (requestsError) {
+        console.error("Error loading friend requests:", requestsError)
+        return
+      }
+
+      // Build friend request states
+      const states: Record<string, "none" | "pending" | "friends"> = {}
+      const playersWithProfiles = new Set(playerProfiles.map((p) => p.full_name || ""))
+
+      for (const profile of playerProfiles) {
+        const isFriend = friendships?.some((f) => f.friend_id === profile.id)
+        const hasPendingRequest = pendingRequests?.some(
+          (r) =>
+            (r.sender_id === user.id && r.receiver_id === profile.id) ||
+            (r.sender_id === profile.id && r.receiver_id === user.id),
+        )
+
+        if (isFriend) {
+          states[profile.full_name || ""] = "friends"
+        } else if (hasPendingRequest) {
+          states[profile.full_name || ""] = "pending"
+        } else {
+          states[profile.full_name || ""] = "none"
+        }
+      }
+
+      // Set a new state to track which players have profiles
+      setPlayersWithProfiles(playersWithProfiles)
+      setFriendRequestStates(states)
+    } catch (error) {
+      console.error("Error loading friend relationships:", error)
+    }
+  }
+
+  // Send friend request to a player
+  const handleSendFriendRequest = async (playerName: string) => {
+    if (!user) return
+
+    setLoadingFriendRequests((prev) => ({ ...prev, [playerName]: true }))
+
+    try {
+      // Find the target user by their full name
+      const { data: targetUser, error: userError } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .eq("full_name", playerName)
+        .single()
+
+      if (userError || !targetUser) {
+        console.error("Target user not found:", userError)
+        return
+      }
+
+      // Send friend request
+      const { error: requestError } = await supabase.from("friend_requests").insert({
+        sender_id: user.id,
+        receiver_id: targetUser.id,
+        status: "pending",
+      })
+
+      if (requestError) {
+        console.error("Error sending friend request:", requestError)
+        return
+      }
+
+      // Update local state
+      setFriendRequestStates((prev) => ({
+        ...prev,
+        [playerName]: "pending",
+      }))
+
+      console.log(`Friend request sent to ${playerName}`)
+    } catch (error) {
+      console.error("Error sending friend request:", error)
+    } finally {
+      setLoadingFriendRequests((prev) => ({ ...prev, [playerName]: false }))
+    }
+  }
+
   // Filter friends who haven't been invited yet
   const getUninvitedFriends = () => {
     const alreadyInvited = session.invitedUsers || []
@@ -353,6 +533,13 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       setInviteLoading(false)
     }
   }
+
+  // Load friend relationships when component mounts or players change
+  useEffect(() => {
+    if (user && session.playersInGame.length > 0) {
+      loadFriendRelationships()
+    }
+  }, [user, session.playersInGame])
 
   const handleFriendInviteToggle = (friendId: string) => {
     setSelectedFriendsToInvite((prev) =>
@@ -997,6 +1184,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             gameStatus={session.status}
             currentPhysicalPointsOnTable={session.currentPhysicalPointsOnTable}
             isGameOwner={isGameOwner}
+            currentUserId={user?.id}
+            friendRequestState={friendRequestStates[p.name]}
+            onSendFriendRequest={() => handleSendFriendRequest(p.name)}
+            isLoadingFriendRequest={loadingFriendRequests[p.name]}
+            hasUserProfile={playersWithProfiles.has(p.name)}
           />
         ))}
       </div>
