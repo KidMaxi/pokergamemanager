@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { View } from "../types"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
@@ -32,6 +32,15 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
   const [success, setSuccess] = useState("")
   const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+
+  useEffect(() => {
+    if (user) {
+      fetchPendingRequests()
+    } else {
+      setPendingRequestsCount(0)
+    }
+  }, [user])
 
   const handleOpenProfile = async () => {
     if (user) {
@@ -143,6 +152,24 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
     }
   }
 
+  const fetchPendingRequests = async () => {
+    if (!user) return
+
+    try {
+      const { data, error } = await supabase
+        .from("friend_requests")
+        .select("id")
+        .eq("receiver_id", user.id)
+        .eq("status", "pending")
+
+      if (!error && data) {
+        setPendingRequestsCount(data.length)
+      }
+    } catch (error) {
+      console.error("Error fetching pending requests:", error)
+    }
+  }
+
   const getStatsColor = (profitLoss: number) => {
     if (profitLoss > 0) return "text-green-400"
     if (profitLoss < 0) return "text-red-400"
@@ -205,13 +232,18 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
 
               <button
                 onClick={() => setCurrentView("friends")}
-                className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                className={`relative px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   activeView === "friends"
                     ? "bg-brand-primary text-white"
                     : "text-text-secondary hover:text-text-primary"
                 }`}
               >
                 Friends
+                {pendingRequestsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center min-w-[16px] text-[10px] font-bold">
+                    {pendingRequestsCount > 9 ? "9+" : pendingRequestsCount}
+                  </span>
+                )}
               </button>
 
               {user && (
