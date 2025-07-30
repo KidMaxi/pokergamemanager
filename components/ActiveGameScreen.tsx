@@ -525,6 +525,13 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     setFormError("")
   }
 
+  const openCashOutModal = (playerId: string) => {
+    setCashOutPlayerId(playerId)
+    setCashOutPointAmount("") // Reset the point amount
+    setIsCashOutModalOpen(true)
+    setFormError("")
+  }
+
   const handleCashOut = () => {
     const cashOutPoints = cashOutPointAmount === "" ? 0 : Number.parseInt(cashOutPointAmount, 10)
 
@@ -566,7 +573,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               cashOutAmount: p.cashOutAmount + cashValue,
               cashOutLog: [...p.cashOutLog, newCashOutLogEntry],
               status: "cashed_out_early" as const,
-              // Track points left on table for finalization
+              // Store the points left on table in the cash out log for persistence
               pointsLeftOnTable: pointsRemainingOnTable,
             }
           : p,
@@ -595,7 +602,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const openFinalizeResultsModal = () => {
     // Calculate the correct physical points on table:
     // 1. Points from active players
-    // 2. Points left on table by early cashout players
+    // 2. Points left on table by early cashout players (stored in their records)
     const activePlayersPoints = session.playersInGame
       .filter((p) => p.status === "active")
       .reduce((sum, p) => sum + p.pointStack, 0)
