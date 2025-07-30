@@ -621,7 +621,7 @@ export default function Home() {
         <div className="min-h-screen flex items-center justify-center bg-surface-main">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
-            <p className="text-text-secondary">Please refresh page if still loading after 10 seconds</p>
+            <p className="text-text-secondary">Loading your data...</p>
           </div>
         </div>
       )
