@@ -28,17 +28,28 @@ interface UseEnhancedGameStateReturn {
 }
 
 export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}): UseEnhancedGameStateReturn {
-  const { userId, autoSave = true, autoSaveInterval = 30000 } = options
+  const { userId, autoSave = true, autoSaveInterval = 60000 } = options // Increased interval to 1 minute
 
   const [sessions, setSessions] = useState<GameSession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isOnline, setIsOnline] = useState(navigator.onLine)
+  const [isOnline, setIsOnline] = useState(typeof window !== "undefined" ? navigator.onLine : true)
   const [lastSyncTime, setLastSyncTime] = useState<number | null>(null)
 
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const performanceMonitor = useRef(PerformanceMonitor.getInstance())
+  const performanceMonitorRef = useRef<PerformanceMonitor | null>(null)
   const lastSaveHashRef = useRef<string>("")
+  const syncInProgressRef = useRef(false)
+  const lastSyncAttemptRef = useRef(0)
+  const syncCooldownRef = useRef(30000) // 30 seconds minimum between syncs
+  const isClient = typeof window !== "undefined"
+
+  // Initialize performance monitor on client side only
+  useEffect(() => {
+    if (isClient && !performanceMonitorRef.current) {
+      performanceMonitorRef.current = PerformanceMonitor.getInstance()
+    }
+  }, [isClient])
 
   // Generate hash for change detection
   const generateSessionsHash = useCallback((sessions: GameSession[]): string => {
@@ -46,15 +57,17 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
       sessions.map((s) => ({
         id: s.id,
         status: s.status,
-        playersInGame: s.playersInGame,
+        playersCount: s.playersInGame.length,
         endTime: s.endTime,
       })),
     )
   }, [])
 
-  // Save to local storage
+  // Save to local storage with debouncing
   const saveToLocalStorage = useCallback(
     (sessionsToSave: GameSession[]) => {
+      if (!isClient) return
+
       const currentHash = generateSessionsHash(sessionsToSave)
 
       if (currentHash !== lastSaveHashRef.current) {
@@ -63,22 +76,33 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
         console.log("Sessions saved to local storage", { count: sessionsToSave.length })
       }
     },
-    [generateSessionsHash],
+    [generateSessionsHash, isClient],
   )
 
   // Load from local storage
   const loadFromLocalStorage = useCallback((): GameSession[] => {
+    if (!isClient) return []
     const state = StatePersistenceManager.loadState()
     return state?.sessions || []
-  }, [])
+  }, [isClient])
 
-  // Sync with database
+  // Sync with database with cooldown and deduplication
   const syncWithDatabase = useCallback(async () => {
-    if (!userId) return
+    if (!userId || !isClient || syncInProgressRef.current) return
+
+    // Implement cooldown to prevent excessive syncing
+    const now = Date.now()
+    if (now - lastSyncAttemptRef.current < syncCooldownRef.current) {
+      console.log("Sync skipped due to cooldown")
+      return
+    }
+
+    lastSyncAttemptRef.current = now
+    syncInProgressRef.current = true
 
     try {
       setError(null)
-      performanceMonitor.current.markRenderStart()
+      performanceMonitorRef.current?.markRenderStart()
 
       // Load games created by the user
       const { data: ownedGames, error: ownedError } = await supabase
@@ -86,10 +110,11 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
         .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id")
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
+        .limit(50) // Limit to prevent excessive data loading
 
       if (ownedError) throw ownedError
 
-      // Load games where user was invited
+      // Load games where user was invited (with limit)
       let invitedGames: any[] = []
       try {
         const { data: invitations, error: invitationsError } = await supabase
@@ -102,6 +127,7 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
           `)
           .eq("invitee_id", userId)
           .eq("status", "accepted")
+          .limit(25) // Limit invited games
 
         if (!invitationsError && invitations) {
           invitedGames = invitations.filter((inv) => inv.game_session).map((inv) => inv.game_session)
@@ -138,7 +164,7 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
         isOwner: session.isOwner,
       }))
 
-      // Calculate physical points for active games
+      // Calculate physical points for active games only
       transformedSessions.forEach((session) => {
         if (session.status === "active" || session.status === "pending_close") {
           let calculatedPoints = 0
@@ -157,7 +183,7 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
       saveToLocalStorage(transformedSessions)
       setLastSyncTime(Date.now())
 
-      performanceMonitor.current.markRenderEnd()
+      performanceMonitorRef.current?.markRenderEnd()
       console.log("Database sync completed", { sessionCount: transformedSessions.length })
     } catch (error) {
       console.error("Database sync failed:", error)
@@ -169,12 +195,16 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
         setSessions(localSessions)
         console.log("Loaded from local storage as fallback")
       }
+    } finally {
+      syncInProgressRef.current = false
     }
-  }, [userId, saveToLocalStorage, loadFromLocalStorage])
+  }, [userId, saveToLocalStorage, loadFromLocalStorage, isClient])
 
-  // Force refresh
+  // Force refresh with reset
   const forceRefresh = useCallback(async () => {
     setLoading(true)
+    syncInProgressRef.current = false
+    lastSyncAttemptRef.current = 0
     try {
       await syncWithDatabase()
     } finally {
@@ -182,8 +212,10 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
     }
   }, [syncWithDatabase])
 
-  // Auto-save functionality
+  // Auto-save functionality with increased debouncing
   useEffect(() => {
+    if (!isClient) return
+
     if (autoSave && sessions.length > 0) {
       if (autoSaveTimeoutRef.current) {
         clearTimeout(autoSaveTimeoutRef.current)
@@ -191,7 +223,7 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
 
       autoSaveTimeoutRef.current = setTimeout(() => {
         saveToLocalStorage(sessions)
-      }, 1000) // Debounce saves
+      }, 2000) // Increased debounce to 2 seconds
     }
 
     return () => {
@@ -199,10 +231,12 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
         clearTimeout(autoSaveTimeoutRef.current)
       }
     }
-  }, [sessions, autoSave, saveToLocalStorage])
+  }, [sessions, autoSave, saveToLocalStorage, isClient])
 
-  // Periodic auto-save
+  // Periodic auto-save with longer intervals
   useEffect(() => {
+    if (!isClient) return
+
     if (autoSave && autoSaveInterval > 0) {
       const interval = setInterval(() => {
         if (sessions.length > 0) {
@@ -212,21 +246,31 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
 
       return () => clearInterval(interval)
     }
-  }, [autoSave, autoSaveInterval, sessions, saveToLocalStorage])
+  }, [autoSave, autoSaveInterval, sessions, saveToLocalStorage, isClient])
 
-  // Online/offline detection
+  // Online/offline detection with debouncing
   useEffect(() => {
+    if (!isClient) return
+
+    let onlineTimeout: NodeJS.Timeout | null = null
+
     const handleOnline = () => {
       setIsOnline(true)
-      console.log("App came online, syncing with database")
-      if (userId) {
-        syncWithDatabase()
-      }
+      console.log("App came online")
+
+      // Debounce sync when coming online
+      if (onlineTimeout) clearTimeout(onlineTimeout)
+      onlineTimeout = setTimeout(() => {
+        if (userId) {
+          syncWithDatabase()
+        }
+      }, 2000)
     }
 
     const handleOffline = () => {
       setIsOnline(false)
       console.log("App went offline")
+      if (onlineTimeout) clearTimeout(onlineTimeout)
     }
 
     window.addEventListener("online", handleOnline)
@@ -235,10 +279,11 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
     return () => {
       window.removeEventListener("online", handleOnline)
       window.removeEventListener("offline", handleOffline)
+      if (onlineTimeout) clearTimeout(onlineTimeout)
     }
-  }, [userId, syncWithDatabase])
+  }, [userId, syncWithDatabase, isClient])
 
-  // Initial load
+  // Initial load with optimization
   useEffect(() => {
     const initialize = async () => {
       setLoading(true)
@@ -252,7 +297,10 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
 
       // Then sync with database if online and user is available
       if (userId && isOnline) {
-        await syncWithDatabase()
+        // Delay initial sync to allow UI to render first
+        setTimeout(() => {
+          syncWithDatabase()
+        }, 1000)
       }
 
       setLoading(false)
@@ -261,11 +309,11 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
     initialize()
   }, [userId, isOnline, loadFromLocalStorage, syncWithDatabase])
 
-  // Session management functions
+  // Session management functions with optimizations
   const addSession = useCallback(
     (session: GameSession) => {
       setSessions((prev) => {
-        const updated = [...prev, session]
+        const updated = [session, ...prev] // Add to beginning for better UX
         saveToLocalStorage(updated)
         return updated
       })
@@ -305,6 +353,7 @@ export function useEnhancedGameState(options: UseEnhancedGameStateOptions = {}):
       if (autoSaveTimeoutRef.current) {
         clearTimeout(autoSaveTimeoutRef.current)
       }
+      syncInProgressRef.current = false
     }
   }, [])
 

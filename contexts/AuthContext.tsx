@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useEffect, useState, useCallback } from "react"
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react"
 import type { User, Session, AuthError } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import type { Database } from "../lib/database.types"
@@ -37,67 +37,112 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [emailVerified, setEmailVerified] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
-  const [sessionManager] = useState(() => SessionManager.getInstance())
-  const [performanceMonitor] = useState(() => PerformanceMonitor.getInstance())
 
-  // Memoized profile fetching function
-  const fetchProfile = useCallback(
-    async (userId: string): Promise<Profile | null> => {
-      try {
-        performanceMonitor.markRenderStart()
+  const sessionManagerRef = useRef<SessionManager | null>(null)
+  const performanceMonitorRef = useRef<PerformanceMonitor | null>(null)
+  const profileCacheRef = useRef<{ [key: string]: Profile }>({})
+  const lastProfileFetchRef = useRef<{ [key: string]: number }>({})
+  const profileFetchCooldown = 30000 // 30 seconds
 
-        const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
+  // Initialize managers only once
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      sessionManagerRef.current = SessionManager.getInstance()
+      performanceMonitorRef.current = PerformanceMonitor.getInstance()
+    }
+  }, [])
 
-        performanceMonitor.markRenderEnd()
+  // Memoized profile fetching function with caching
+  const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
+    if (!userId) return null
 
-        if (error) {
-          console.error("Error fetching profile:", error)
-          return null
-        }
+    // Check cache first
+    const cached = profileCacheRef.current[userId]
+    const lastFetch = lastProfileFetchRef.current[userId] || 0
+    const now = Date.now()
 
-        return data
-      } catch (error) {
+    if (cached && now - lastFetch < profileFetchCooldown) {
+      return cached
+    }
+
+    try {
+      performanceMonitorRef.current?.markRenderStart()
+
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
+
+      performanceMonitorRef.current?.markRenderEnd()
+
+      if (error) {
         console.error("Error fetching profile:", error)
-        return null
+        return cached || null // Return cached version if available
       }
-    },
-    [performanceMonitor],
-  )
+
+      // Update cache
+      profileCacheRef.current[userId] = data
+      lastProfileFetchRef.current[userId] = now
+
+      return data
+    } catch (error) {
+      console.error("Error fetching profile:", error)
+      return cached || null
+    }
+  }, [])
 
   const refreshProfile = useCallback(async () => {
     if (user) {
+      // Clear cache for this user to force refresh
+      delete profileCacheRef.current[user.id]
+      delete lastProfileFetchRef.current[user.id]
+
       const profileData = await fetchProfile(user.id)
       setProfile(profileData)
     }
   }, [user, fetchProfile])
 
-  // Handle session state changes
+  // Handle session state changes with debouncing
   useEffect(() => {
-    const unsubscribe = sessionManager.subscribe((sessionState: SessionState) => {
-      setUser(sessionState.user)
-      setSession(sessionState.session)
-      setIsConnected(sessionState.isConnected)
-      setReconnectAttempts(sessionState.reconnectAttempts)
-      setEmailVerified(sessionState.user?.email_confirmed_at ? true : false)
+    if (!sessionManagerRef.current) return
 
-      // Fetch profile when user changes and is verified
-      if (sessionState.user && sessionState.user.email_confirmed_at) {
-        fetchProfile(sessionState.user.id).then(setProfile)
-      } else {
-        setProfile(null)
+    let updateTimeout: NodeJS.Timeout | null = null
+
+    const unsubscribe = sessionManagerRef.current.subscribe((sessionState: SessionState) => {
+      // Debounce rapid session state changes
+      if (updateTimeout) {
+        clearTimeout(updateTimeout)
       }
 
-      setLoading(false)
+      updateTimeout = setTimeout(() => {
+        setUser(sessionState.user)
+        setSession(sessionState.session)
+        setIsConnected(sessionState.isConnected)
+        setReconnectAttempts(sessionState.reconnectAttempts)
+        setEmailVerified(sessionState.user?.email_confirmed_at ? true : false)
+
+        // Fetch profile when user changes and is verified
+        if (sessionState.user && sessionState.user.email_confirmed_at) {
+          fetchProfile(sessionState.user.id).then(setProfile)
+        } else {
+          setProfile(null)
+        }
+
+        setLoading(false)
+      }, 100) // 100ms debounce
     })
 
-    return unsubscribe
-  }, [sessionManager, fetchProfile])
+    return () => {
+      unsubscribe()
+      if (updateTimeout) {
+        clearTimeout(updateTimeout)
+      }
+    }
+  }, [fetchProfile])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      // Don't destroy session manager as it's a singleton
-      // sessionManager.destroy()
+      // Clear caches
+      profileCacheRef.current = {}
+      lastProfileFetchRef.current = {}
     }
   }, [])
 
@@ -149,8 +194,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setEmailVerified(false)
       setIsConnected(false)
 
+      // Clear caches
+      profileCacheRef.current = {}
+      lastProfileFetchRef.current = {}
+
       // Use session manager for proper cleanup
-      await sessionManager.signOut()
+      if (sessionManagerRef.current) {
+        await sessionManagerRef.current.signOut()
+      }
 
       return { error: null }
     } catch (error) {
@@ -158,7 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [sessionManager])
+  }, [])
 
   const updateProfile = useCallback(
     async (updates: Partial<Profile>) => {
@@ -170,6 +221,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { error } = await supabase.from("profiles").update(updates).eq("id", user.id)
 
         if (!error) {
+          // Clear cache and refresh
+          delete profileCacheRef.current[user.id]
+          delete lastProfileFetchRef.current[user.id]
           await refreshProfile()
         }
 
@@ -201,13 +255,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const forceRefresh = useCallback(async () => {
     try {
       setLoading(true)
-      await sessionManager.forceRefresh()
+
+      // Clear all caches
+      profileCacheRef.current = {}
+      lastProfileFetchRef.current = {}
+
+      if (sessionManagerRef.current) {
+        await sessionManagerRef.current.forceRefresh()
+      }
     } catch (error) {
       console.error("Force refresh failed:", error)
     } finally {
       setLoading(false)
     }
-  }, [sessionManager])
+  }, [])
 
   const value = {
     user,

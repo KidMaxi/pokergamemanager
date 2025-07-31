@@ -22,14 +22,22 @@ export class SessionManager {
   private activityTimer: NodeJS.Timeout | null = null
   private reconnectTimer: NodeJS.Timeout | null = null
   private healthCheckTimer: NodeJS.Timeout | null = null
-  private maxReconnectAttempts = 5
-  private reconnectDelay = 2000
+  private maxReconnectAttempts = 3 // Reduced from 5 to prevent excessive retries
+  private reconnectDelay = 5000 // Increased delay to reduce frequency
+  private isClient = typeof window !== "undefined"
+  private cleanupFunctions: (() => void)[] = []
+  private isDestroyed = false
+  private lastHealthCheck = 0
+  private healthCheckCooldown = 60000 // 1 minute cooldown between health checks
+  private authSubscription: any = null
 
   private constructor() {
-    this.initializeSession()
-    this.setupActivityTracking()
-    this.setupHealthCheck()
-    this.setupVisibilityHandling()
+    if (this.isClient && !this.isDestroyed) {
+      this.initializeSession()
+      this.setupActivityTracking()
+      this.setupVisibilityHandling()
+      this.setupBeforeUnloadHandler()
+    }
   }
 
   static getInstance(): SessionManager {
@@ -40,6 +48,8 @@ export class SessionManager {
   }
 
   private async initializeSession() {
+    if (!this.isClient || this.isDestroyed) return
+
     try {
       // Get initial session
       const {
@@ -57,8 +67,12 @@ export class SessionManager {
         this.sessionState.lastActivity = Date.now()
       }
 
-      // Listen for auth changes
-      supabase.auth.onAuthStateChange(async (event, session) => {
+      // Listen for auth changes with proper cleanup
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (this.isDestroyed) return
+
         console.log("Auth state changed:", event, session?.user?.id)
 
         this.sessionState.session = session
@@ -75,7 +89,7 @@ export class SessionManager {
             break
           case "SIGNED_OUT":
             this.sessionState.isConnected = false
-            this.cleanup()
+            this.stopHealthCheck()
             break
           case "TOKEN_REFRESHED":
             this.sessionState.isConnected = true
@@ -89,6 +103,9 @@ export class SessionManager {
         this.notifyListeners()
       })
 
+      this.authSubscription = subscription
+      this.cleanupFunctions.push(() => subscription.unsubscribe())
+
       this.notifyListeners()
     } catch (error) {
       console.error("Failed to initialize session:", error)
@@ -98,70 +115,93 @@ export class SessionManager {
   }
 
   private setupActivityTracking() {
+    if (!this.isClient || this.isDestroyed) return
+
     const updateActivity = () => {
+      if (this.isDestroyed) return
       this.sessionState.lastActivity = Date.now()
       this.resetActivityTimer()
     }
 
-    // Track various user activities
+    // Track various user activities with passive listeners
     const events = ["mousedown", "mousemove", "keypress", "scroll", "touchstart", "click", "focus"]
+
+    const eventCleanup = () => {
+      events.forEach((event) => {
+        document.removeEventListener(event, updateActivity)
+      })
+    }
 
     events.forEach((event) => {
       document.addEventListener(event, updateActivity, { passive: true })
     })
 
-    // Cleanup function will be called when session manager is destroyed
-    this.cleanup = () => {
-      events.forEach((event) => {
-        document.removeEventListener(event, updateActivity)
-      })
-      this.clearTimers()
-    }
+    this.cleanupFunctions.push(eventCleanup)
+    this.resetActivityTimer()
   }
 
   private resetActivityTimer() {
+    if (!this.isClient || this.isDestroyed) return
+
     if (this.activityTimer) {
       clearTimeout(this.activityTimer)
     }
 
-    // Set inactivity timeout (30 minutes)
+    // Set inactivity timeout (45 minutes - increased to reduce frequency)
     this.activityTimer = setTimeout(
       () => {
-        console.log("User inactive for 30 minutes, checking session validity")
-        this.checkSessionValidity()
+        if (!this.isDestroyed) {
+          console.log("User inactive for 45 minutes, checking session validity")
+          this.checkSessionValidity()
+        }
       },
-      30 * 60 * 1000,
+      45 * 60 * 1000,
     )
-  }
-
-  private setupHealthCheck() {
-    this.startHealthCheck()
   }
 
   private startHealthCheck() {
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer)
-    }
+    if (!this.isClient || this.isDestroyed) return
 
-    // Check connection health every 2 minutes
+    this.stopHealthCheck() // Clear any existing timer
+
+    // Check connection health every 5 minutes (increased interval)
     this.healthCheckTimer = setInterval(
       async () => {
-        if (this.sessionState.user) {
+        if (!this.isDestroyed && this.sessionState.user) {
           await this.checkConnectionHealth()
         }
       },
-      2 * 60 * 1000,
+      5 * 60 * 1000,
     )
   }
 
+  private stopHealthCheck() {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer)
+      this.healthCheckTimer = null
+    }
+  }
+
   private async checkConnectionHealth() {
+    if (!this.isClient || this.isDestroyed) return
+
+    // Implement cooldown to prevent excessive health checks
+    const now = Date.now()
+    if (now - this.lastHealthCheck < this.healthCheckCooldown) {
+      return
+    }
+    this.lastHealthCheck = now
+
     try {
-      const { data, error } = await supabase.from("profiles").select("id").limit(1).single()
+      // Use a lightweight query to check connection
+      const { error } = await supabase.from("profiles").select("id").limit(1).single()
 
       if (error && error.code === "PGRST301") {
         // No rows returned is fine, connection is working
         this.sessionState.isConnected = true
-      } else if (error) {
+        this.sessionState.reconnectAttempts = 0
+      } else if (error && error.code !== "PGRST116") {
+        // PGRST116 is "not found" which is acceptable
         console.warn("Connection health check failed:", error)
         this.sessionState.isConnected = false
         this.attemptReconnection()
@@ -179,6 +219,8 @@ export class SessionManager {
   }
 
   private async checkSessionValidity() {
+    if (!this.isClient || this.isDestroyed) return
+
     try {
       const {
         data: { session },
@@ -201,6 +243,8 @@ export class SessionManager {
   }
 
   private async attemptSessionRefresh() {
+    if (!this.isClient || this.isDestroyed) return
+
     try {
       const {
         data: { session },
@@ -227,6 +271,8 @@ export class SessionManager {
   }
 
   private async attemptReconnection() {
+    if (!this.isClient || this.isDestroyed) return
+
     if (this.sessionState.reconnectAttempts >= this.maxReconnectAttempts) {
       console.log("Max reconnection attempts reached")
       return
@@ -239,21 +285,29 @@ export class SessionManager {
       clearTimeout(this.reconnectTimer)
     }
 
+    // Exponential backoff for reconnection attempts
+    const delay = this.reconnectDelay * Math.pow(2, this.sessionState.reconnectAttempts - 1)
+
     this.reconnectTimer = setTimeout(async () => {
-      await this.checkSessionValidity()
-    }, this.reconnectDelay * this.sessionState.reconnectAttempts)
+      if (!this.isDestroyed) {
+        await this.checkSessionValidity()
+      }
+    }, delay)
   }
 
   private setupVisibilityHandling() {
+    if (!this.isClient || this.isDestroyed) return
+
     const handleVisibilityChange = async () => {
+      if (this.isDestroyed) return
+
       if (document.visibilityState === "visible") {
         console.log("App became visible, checking session")
         this.sessionState.lastActivity = Date.now()
 
-        // Check session when app becomes visible
-        if (this.sessionState.user) {
+        // Only check session if user exists and enough time has passed
+        if (this.sessionState.user && Date.now() - this.lastHealthCheck > 30000) {
           await this.checkSessionValidity()
-          await this.checkConnectionHealth()
         }
       } else {
         console.log("App became hidden")
@@ -261,6 +315,33 @@ export class SessionManager {
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    this.cleanupFunctions.push(() => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+    })
+  }
+
+  private setupBeforeUnloadHandler() {
+    if (!this.isClient || this.isDestroyed) return
+
+    const handleBeforeUnload = () => {
+      // Save current state before unload
+      if (this.sessionState.user) {
+        localStorage.setItem(
+          "poker-session-backup",
+          JSON.stringify({
+            userId: this.sessionState.user.id,
+            timestamp: Date.now(),
+          }),
+        )
+      }
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+
+    this.cleanupFunctions.push(() => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+    })
   }
 
   private clearTimers() {
@@ -272,28 +353,46 @@ export class SessionManager {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer)
-      this.healthCheckTimer = null
-    }
+    this.stopHealthCheck()
   }
 
   private cleanup() {
     this.clearTimers()
+    this.cleanupFunctions.forEach((cleanup) => {
+      try {
+        cleanup()
+      } catch (error) {
+        console.error("Error during cleanup:", error)
+      }
+    })
+    this.cleanupFunctions = []
   }
 
   private notifyListeners() {
-    this.listeners.forEach((listener) => {
-      try {
-        listener({ ...this.sessionState })
-      } catch (error) {
-        console.error("Error notifying session listener:", error)
-      }
+    if (this.isDestroyed) return
+
+    // Use requestAnimationFrame to batch notifications and prevent excessive updates
+    requestAnimationFrame(() => {
+      if (this.isDestroyed) return
+
+      const state = { ...this.sessionState }
+      this.listeners.forEach((listener) => {
+        try {
+          listener(state)
+        } catch (error) {
+          console.error("Error notifying session listener:", error)
+        }
+      })
     })
   }
 
   // Public methods
   subscribe(listener: (state: SessionState) => void): () => void {
+    if (this.isDestroyed) {
+      console.warn("Cannot subscribe to destroyed SessionManager")
+      return () => {}
+    }
+
     this.listeners.add(listener)
 
     // Immediately notify with current state
@@ -310,18 +409,26 @@ export class SessionManager {
   }
 
   async forceRefresh(): Promise<void> {
+    if (!this.isClient || this.isDestroyed) return
+
     console.log("Forcing session refresh")
     await this.checkSessionValidity()
-    await this.checkConnectionHealth()
+
+    // Only check connection health if enough time has passed
+    if (Date.now() - this.lastHealthCheck > 10000) {
+      await this.checkConnectionHealth()
+    }
   }
 
   async signOut(): Promise<void> {
+    if (!this.isClient || this.isDestroyed) return
+
     try {
       await supabase.auth.signOut()
       this.sessionState.session = null
       this.sessionState.user = null
       this.sessionState.isConnected = false
-      this.cleanup()
+      this.stopHealthCheck()
       this.notifyListeners()
     } catch (error) {
       console.error("Sign out error:", error)
@@ -329,7 +436,12 @@ export class SessionManager {
   }
 
   destroy() {
+    this.isDestroyed = true
     this.cleanup()
     this.listeners.clear()
+
+    if (this.authSubscription) {
+      this.authSubscription.unsubscribe()
+    }
   }
 }

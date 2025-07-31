@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
 import type {
@@ -42,9 +42,21 @@ export default function Home() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [profile, setProfile] = useState<any | null>(null)
   const [showDebugPanel, setShowDebugPanel] = useState(false)
-  const [performanceMonitor] = useState(() => PerformanceMonitor.getInstance())
 
-  // Use enhanced game state management
+  const performanceMonitorRef = useRef<PerformanceMonitor | null>(null)
+  const profileCacheRef = useRef<{ [key: string]: any }>({})
+  const lastProfileFetchRef = useRef<{ [key: string]: number }>({})
+  const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const profileFetchCooldown = 60000 // 1 minute cooldown for profile fetching
+
+  // Initialize performance monitor
+  useEffect(() => {
+    if (typeof window !== "undefined" && !performanceMonitorRef.current) {
+      performanceMonitorRef.current = PerformanceMonitor.getInstance()
+    }
+  }, [])
+
+  // Use enhanced game state management with optimized settings
   const {
     sessions: gameSessions,
     loading: gameStateLoading,
@@ -61,68 +73,98 @@ export default function Home() {
   } = useEnhancedGameState({
     userId: user?.id,
     autoSave: true,
-    autoSaveInterval: 30000,
+    autoSaveInterval: 120000, // Increased to 2 minutes
   })
 
   const loading = authLoading || gameStateLoading
 
   usePWA()
 
-  // Restore view state on mount
+  // Restore view state on mount with debouncing
   useEffect(() => {
-    const savedState = StatePersistenceManager.loadState()
-    if (savedState) {
-      if (savedState.currentView && savedState.currentView !== "dashboard") {
-        setCurrentView(savedState.currentView as View)
-      }
-      if (savedState.activeGameId) {
-        setActiveGameId(savedState.activeGameId)
+    const restoreState = () => {
+      const savedState = StatePersistenceManager.loadState()
+      if (savedState) {
+        if (savedState.currentView && savedState.currentView !== "dashboard") {
+          setCurrentView(savedState.currentView as View)
+        }
+        if (savedState.activeGameId) {
+          setActiveGameId(savedState.activeGameId)
+        }
       }
     }
+
+    // Delay state restoration to allow other initialization to complete
+    const timeout = setTimeout(restoreState, 500)
+    return () => clearTimeout(timeout)
   }, [])
 
-  // Save view state when it changes
+  // Save view state when it changes with debouncing
   useEffect(() => {
-    if (!loading) {
+    if (loading) return
+
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current)
+    }
+
+    refreshTimeoutRef.current = setTimeout(() => {
       StatePersistenceManager.saveState({
         sessions: gameSessions,
         currentView,
         activeGameId,
       })
+    }, 1000)
+
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current)
+      }
     }
   }, [currentView, activeGameId, gameSessions, loading])
 
-  // Handle connection status changes
+  // Handle connection status changes with reduced logging
   useEffect(() => {
-    if (!isConnected && reconnectAttempts > 0) {
-      console.log(`Connection lost, attempting reconnection (${reconnectAttempts}/5)`)
+    if (!isConnected && reconnectAttempts > 0 && reconnectAttempts <= 3) {
+      console.log(`Connection lost, attempting reconnection (${reconnectAttempts}/3)`)
     } else if (isConnected && reconnectAttempts > 0) {
       console.log("Connection restored")
     }
   }, [isConnected, reconnectAttempts])
 
-  // Handle game state errors
+  // Handle game state errors with auto-clear
   useEffect(() => {
     if (gameStateError) {
       console.error("Game state error:", gameStateError)
-      // Auto-clear error after 10 seconds
-      const timer = setTimeout(clearGameStateError, 10000)
+      // Auto-clear error after 15 seconds
+      const timer = setTimeout(clearGameStateError, 15000)
       return () => clearTimeout(timer)
     }
   }, [gameStateError, clearGameStateError])
 
-  // Periodic cleanup
+  // Periodic cleanup with longer intervals
   useEffect(() => {
     const cleanup = () => {
       StatePersistenceManager.cleanup()
+
+      // Clear old profile cache entries
+      const now = Date.now()
+      Object.keys(profileCacheRef.current).forEach((userId) => {
+        const lastFetch = lastProfileFetchRef.current[userId] || 0
+        if (now - lastFetch > 24 * 60 * 60 * 1000) {
+          // 24 hours
+          delete profileCacheRef.current[userId]
+          delete lastProfileFetchRef.current[userId]
+        }
+      })
+
       console.log("Performed periodic cleanup")
     }
 
-    // Run cleanup every hour
-    const interval = setInterval(cleanup, 60 * 60 * 1000)
+    // Run cleanup every 2 hours
+    const interval = setInterval(cleanup, 2 * 60 * 60 * 1000)
 
-    // Run initial cleanup after 5 minutes
-    const initialCleanup = setTimeout(cleanup, 5 * 60 * 1000)
+    // Run initial cleanup after 10 minutes
+    const initialCleanup = setTimeout(cleanup, 10 * 60 * 1000)
 
     return () => {
       clearInterval(interval)
@@ -130,32 +172,58 @@ export default function Home() {
     }
   }, [])
 
+  // Optimized profile fetching with caching
   const fetchProfile = useCallback(async () => {
     if (!user) return
 
+    const userId = user.id
+    const now = Date.now()
+    const lastFetch = lastProfileFetchRef.current[userId] || 0
+    const cached = profileCacheRef.current[userId]
+
+    // Use cached profile if recent
+    if (cached && now - lastFetch < profileFetchCooldown) {
+      setProfile(cached)
+      return
+    }
+
     try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).single()
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
 
       if (error) {
         console.error("Error fetching profile:", error)
+        // Use cached version if available
+        if (cached) {
+          setProfile(cached)
+        }
         return
       }
 
+      // Update cache
+      profileCacheRef.current[userId] = data
+      lastProfileFetchRef.current[userId] = now
       setProfile(data)
     } catch (error) {
       console.error("Error fetching profile:", error)
+      // Use cached version if available
+      if (cached) {
+        setProfile(cached)
+      }
     }
   }, [user])
 
-  // Load profile when user changes
+  // Load profile when user changes with debouncing
   useEffect(() => {
     if (user && emailVerified) {
-      fetchProfile()
+      // Delay profile fetch to avoid blocking UI
+      const timeout = setTimeout(fetchProfile, 100)
+      return () => clearTimeout(timeout)
     } else {
       setProfile(null)
     }
   }, [user, emailVerified, fetchProfile])
 
+  // Optimized game invitation sending
   const sendGameInvitations = useCallback(
     async (gameSessionId: string, invitedUserIds: string[]) => {
       if (!invitedUserIds.length || !user) return
@@ -182,6 +250,7 @@ export default function Home() {
     [user],
   )
 
+  // Database operations with better error handling
   const saveGameSessionToDatabase = useCallback(
     async (session: GameSession) => {
       if (!user) throw new Error("No user logged in")
@@ -476,6 +545,11 @@ export default function Home() {
   const handleForceRefresh = useCallback(async () => {
     try {
       console.log("Force refreshing application state...")
+
+      // Clear caches
+      profileCacheRef.current = {}
+      lastProfileFetchRef.current = {}
+
       await Promise.all([forceAuthRefresh(), forceGameStateRefresh()])
       console.log("Force refresh completed")
     } catch (error) {
@@ -497,7 +571,7 @@ export default function Home() {
           <div className="flex items-center justify-between">
             <span>
               {reconnectAttempts > 0
-                ? `Reconnecting... (${reconnectAttempts}/5)`
+                ? `Reconnecting... (${reconnectAttempts}/3)`
                 : "Connection lost. Some features may be limited."}
             </span>
             <button onClick={handleForceRefresh} className="text-yellow-300 hover:text-yellow-100 underline ml-4">
@@ -668,7 +742,7 @@ export default function Home() {
       {user && emailVerified && (
         <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
           <div className="flex flex-col sm:flex-row items-center justify-between">
-            <span>Poker Homegame Manager V52 - Enhanced Performance &copy; {new Date().getFullYear()}</span>
+            <span>Poker Homegame Manager V53 - Optimized Performance &copy; {new Date().getFullYear()}</span>
             <div className="flex items-center space-x-4 mt-2 sm:mt-0 text-xs">
               <span className={`flex items-center ${isOnline ? "text-green-400" : "text-red-400"}`}>
                 <div className={`w-2 h-2 rounded-full mr-1 ${isOnline ? "bg-green-400" : "bg-red-400"}`}></div>
@@ -676,6 +750,11 @@ export default function Home() {
               </span>
               {lastSyncTime && (
                 <span className="text-slate-400">Synced: {new Date(lastSyncTime).toLocaleTimeString()}</span>
+              )}
+              {performanceMonitorRef.current && (
+                <span className="text-slate-400">
+                  Perf: {performanceMonitorRef.current.getLatestMetrics()?.memoryUsage.toFixed(1) || "0"}MB
+                </span>
               )}
             </div>
           </div>
