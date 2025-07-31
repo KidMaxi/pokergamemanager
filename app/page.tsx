@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect } from "react"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
 import type {
@@ -13,9 +13,7 @@ import type {
 } from "../types"
 import { generateId, generateLogId } from "../utils"
 import { usePWA } from "../hooks/usePWA"
-import { useEnhancedGameState } from "../hooks/useEnhancedGameState"
-import { StatePersistenceManager } from "../utils/statePersistenceManager"
-import { PerformanceMonitor } from "../utils/performanceMonitor"
+import { useGameStateSync } from "../hooks/useGameStateSync"
 import Navbar from "../components/Navbar"
 import PlayerManagement from "../components/PlayerManagement"
 import GameDashboard from "../components/GameDashboard"
@@ -27,583 +25,579 @@ import EmailVerificationScreen from "../components/auth/EmailVerificationScreen"
 import GameStateDebugPanel from "../components/debug/GameStateDebugPanel"
 
 export default function Home() {
-  const {
-    user,
-    loading: authLoading,
-    emailVerified,
-    isConnected,
-    reconnectAttempts,
-    forceRefresh: forceAuthRefresh,
-  } = useAuth()
-
+  const { user, loading: authLoading, emailVerified } = useAuth()
   const [players, setPlayers] = useState<Player[]>([])
+  const [gameSessions, setGameSessions] = useState<GameSession[]>([])
   const [currentView, setCurrentView] = useState<View>("dashboard")
   const [activeGameId, setActiveGameId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [profile, setProfile] = useState<any | null>(null)
   const [showDebugPanel, setShowDebugPanel] = useState(false)
 
-  const performanceMonitorRef = useRef<PerformanceMonitor | null>(null)
-  const profileCacheRef = useRef<{ [key: string]: any }>({})
-  const lastProfileFetchRef = useRef<{ [key: string]: number }>({})
-  const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const profileFetchCooldown = 60000 // 1 minute cooldown for profile fetching
-
-  // Initialize performance monitor
-  useEffect(() => {
-    if (typeof window !== "undefined" && !performanceMonitorRef.current) {
-      performanceMonitorRef.current = PerformanceMonitor.getInstance()
-    }
-  }, [])
-
-  // Use enhanced game state management with optimized settings
-  const {
-    sessions: gameSessions,
-    loading: gameStateLoading,
-    error: gameStateError,
-    isOnline,
-    lastSyncTime,
-    setSessions: setGameSessions,
-    addSession,
-    updateSession,
-    removeSession,
-    syncWithDatabase,
-    forceRefresh: forceGameStateRefresh,
-    clearError: clearGameStateError,
-  } = useEnhancedGameState({
-    userId: user?.id,
-    autoSave: true,
-    autoSaveInterval: 120000, // Increased to 2 minutes
-  })
-
-  const loading = authLoading || gameStateLoading
-
   usePWA()
 
-  // Restore view state on mount with debouncing
-  useEffect(() => {
-    const restoreState = () => {
-      const savedState = StatePersistenceManager.loadState()
-      if (savedState) {
-        if (savedState.currentView && savedState.currentView !== "dashboard") {
-          setCurrentView(savedState.currentView as View)
-        }
-        if (savedState.activeGameId) {
-          setActiveGameId(savedState.activeGameId)
-        }
-      }
-    }
+  // Use game state sync hook for better refresh handling
+  const gameStateSync = useGameStateSync({
+    sessions: gameSessions,
+    onSessionsUpdate: setGameSessions,
+    autoSaveInterval: 30000, // Save every 30 seconds
+    enableVisibilitySync: true, // Sync when user switches tabs
+  })
 
-    // Delay state restoration to allow other initialization to complete
-    const timeout = setTimeout(restoreState, 500)
-    return () => clearTimeout(timeout)
-  }, [])
-
-  // Save view state when it changes with debouncing
-  useEffect(() => {
-    if (loading) return
-
-    if (refreshTimeoutRef.current) {
-      clearTimeout(refreshTimeoutRef.current)
-    }
-
-    refreshTimeoutRef.current = setTimeout(() => {
-      StatePersistenceManager.saveState({
-        sessions: gameSessions,
-        currentView,
-        activeGameId,
-      })
-    }, 1000)
-
-    return () => {
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current)
-      }
-    }
-  }, [currentView, activeGameId, gameSessions, loading])
-
-  // Handle connection status changes with reduced logging
-  useEffect(() => {
-    if (!isConnected && reconnectAttempts > 0 && reconnectAttempts <= 3) {
-      console.log(`Connection lost, attempting reconnection (${reconnectAttempts}/3)`)
-    } else if (isConnected && reconnectAttempts > 0) {
-      console.log("Connection restored")
-    }
-  }, [isConnected, reconnectAttempts])
-
-  // Handle game state errors with auto-clear
-  useEffect(() => {
-    if (gameStateError) {
-      console.error("Game state error:", gameStateError)
-      // Auto-clear error after 15 seconds
-      const timer = setTimeout(clearGameStateError, 15000)
-      return () => clearTimeout(timer)
-    }
-  }, [gameStateError, clearGameStateError])
-
-  // Periodic cleanup with longer intervals
-  useEffect(() => {
-    const cleanup = () => {
-      StatePersistenceManager.cleanup()
-
-      // Clear old profile cache entries
-      const now = Date.now()
-      Object.keys(profileCacheRef.current).forEach((userId) => {
-        const lastFetch = lastProfileFetchRef.current[userId] || 0
-        if (now - lastFetch > 24 * 60 * 60 * 1000) {
-          // 24 hours
-          delete profileCacheRef.current[userId]
-          delete lastProfileFetchRef.current[userId]
-        }
-      })
-
-      console.log("Performed periodic cleanup")
-    }
-
-    // Run cleanup every 2 hours
-    const interval = setInterval(cleanup, 2 * 60 * 60 * 1000)
-
-    // Run initial cleanup after 10 minutes
-    const initialCleanup = setTimeout(cleanup, 10 * 60 * 1000)
-
-    return () => {
-      clearInterval(interval)
-      clearTimeout(initialCleanup)
-    }
-  }, [])
-
-  // Optimized profile fetching with caching
-  const fetchProfile = useCallback(async () => {
-    if (!user) return
-
-    const userId = user.id
-    const now = Date.now()
-    const lastFetch = lastProfileFetchRef.current[userId] || 0
-    const cached = profileCacheRef.current[userId]
-
-    // Use cached profile if recent
-    if (cached && now - lastFetch < profileFetchCooldown) {
-      setProfile(cached)
-      return
-    }
-
+  const checkConnection = async () => {
     try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
+      const { data, error } = await supabase.from("profiles").select("id").limit(1).single()
+      return !error
+    } catch {
+      return false
+    }
+  }
+
+  const loadUserData = async () => {
+    try {
+      setLoading(true)
+
+      // Load games created by the user
+      let sessionsData
+      let sessionsError
+
+      try {
+        // Try with invited_users column first
+        const result = await supabase
+          .from("game_sessions")
+          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id")
+          .eq("user_id", user!.id)
+          .order("created_at", { ascending: false })
+
+        sessionsData = result.data
+        sessionsError = result.error
+      } catch (error) {
+        console.log("invited_users column doesn't exist yet, falling back to basic query")
+
+        // Fallback query without invited_users column
+        const result = await supabase
+          .from("game_sessions")
+          .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, user_id")
+          .eq("user_id", user!.id)
+          .order("created_at", { ascending: false })
+
+        sessionsData = result.data
+        sessionsError = result.error
+      }
+
+      if (sessionsError) {
+        console.error("Sessions query error:", sessionsError)
+        throw new Error(`Database error: ${sessionsError.message}`)
+      }
+
+      // Also load games where the user has accepted invitations
+      let invitedGamesData = []
+      try {
+        const { data: acceptedInvitations, error: invitationsError } = await supabase
+          .from("game_invitations")
+          .select(`
+          game_session_id,
+          game_session:game_sessions(
+            id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id
+          )
+        `)
+          .eq("invitee_id", user!.id)
+          .eq("status", "accepted")
+
+        if (!invitationsError && acceptedInvitations) {
+          invitedGamesData = acceptedInvitations.filter((inv) => inv.game_session).map((inv) => inv.game_session)
+        }
+      } catch (error) {
+        console.log("Game invitations not available yet, skipping invited games")
+      }
+
+      // Combine owned games and invited games, removing duplicates
+      const allGamesMap = new Map()
+
+      // Add owned games
+      sessionsData.forEach((session) => {
+        allGamesMap.set(session.id, { ...session, isOwner: true })
+      })
+
+      // Add invited games (don't override owned games)
+      invitedGamesData.forEach((session) => {
+        if (!allGamesMap.has(session.id)) {
+          allGamesMap.set(session.id, { ...session, isOwner: false })
+        }
+      })
+
+      const combinedSessions = Array.from(allGamesMap.values())
+
+      // Transform database data to match our types with enhanced validation
+      const transformedSessions: GameSession[] = combinedSessions.map((session) => {
+        const baseSession: GameSession = {
+          id: session.id,
+          name: session.name,
+          startTime: session.start_time,
+          endTime: session.end_time,
+          status: session.status,
+          pointToCashRate: session.point_to_cash_rate,
+          standardBuyInAmount: 25, // Default value
+          currentPhysicalPointsOnTable: 0, // Will be calculated
+          playersInGame: session.players_data || [], // Load from JSONB column
+          invitedUsers: session.invited_users || [], // Use empty array if column doesn't exist
+          isOwner: session.isOwner, // Track if user owns this game
+        }
+
+        // Calculate and validate physical points for active games
+        if (baseSession.status === "active" || baseSession.status === "pending_close") {
+          let calculatedPoints = 0
+
+          for (const player of baseSession.playersInGame) {
+            if (player.status === "active") {
+              calculatedPoints += player.pointStack || 0
+            } else if (player.status === "cashed_out_early") {
+              // Include points left on table by early cashout players
+              calculatedPoints += player.pointsLeftOnTable || 0
+            }
+          }
+
+          baseSession.currentPhysicalPointsOnTable = calculatedPoints
+        }
+
+        return baseSession
+      })
+
+      setGameSessions(transformedSessions)
+    } catch (error) {
+      console.error("Error loading user data:", error)
+      // Fallback: Try to load from local storage
+      const localSessions = gameStateSync.forceSync ? [] : []
+      setGameSessions(localSessions)
+      alert("Unable to load your games from server. Loading local data if available.")
+    } finally {
+      setLoading(false)
+      // Restore current view from localStorage after refresh
+      const savedView = localStorage.getItem("poker-current-view")
+      if (savedView && (savedView === "friends" || savedView === "dashboard")) {
+        setCurrentView(savedView as View)
+        localStorage.removeItem("poker-current-view") // Clean up
+      }
+    }
+  }
+
+  // Enhanced useEffect with better refresh handling
+  useEffect(() => {
+    if (user && !authLoading) {
+      // First check if we can connect to the database
+      checkConnection()
+        .then((isConnected) => {
+          if (isConnected) {
+            console.log("Database connection verified, loading data...")
+            loadUserData()
+            fetchProfile()
+          } else {
+            console.error("Database connection failed")
+            setLoading(false)
+            // Try to load from local storage as fallback
+            if (gameStateSync.forceSync) {
+              gameStateSync.forceSync()
+            }
+            alert("Database connection failed. Loading local data if available.")
+          }
+        })
+        .catch((error) => {
+          console.error("Connection check failed:", error)
+          setLoading(false)
+          // Try to load from local storage as fallback
+          if (gameStateSync.forceSync) {
+            gameStateSync.forceSync()
+          }
+          alert("Unable to verify database connection. Loading local data if available.")
+        })
+
+      // Safety timeout - force loading to false after 15 seconds
+      const timeoutId = setTimeout(() => {
+        console.warn("Loading timeout reached, forcing loading to false")
+        setLoading(false)
+      }, 15000)
+
+      return () => clearTimeout(timeoutId)
+    } else if (!authLoading && !user) {
+      setPlayers([])
+      setGameSessions([])
+      setLoading(false)
+    }
+  }, [user, authLoading])
+
+  // Add this useEffect after the existing useEffect
+  useEffect(() => {
+    // Listen for auth state changes and reset app state when user signs out
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        // Clear all app state when user signs out
+        setPlayers([])
+        setGameSessions([])
+        setProfile(null)
+        setCurrentView("dashboard")
+        setActiveGameId(null)
+        setLoading(false)
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const fetchProfile = async () => {
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", user!.id).single()
 
       if (error) {
         console.error("Error fetching profile:", error)
-        // Use cached version if available
-        if (cached) {
-          setProfile(cached)
-        }
+        // Don't throw here, just log and continue
         return
       }
 
-      // Update cache
-      profileCacheRef.current[userId] = data
-      lastProfileFetchRef.current[userId] = now
       setProfile(data)
     } catch (error) {
       console.error("Error fetching profile:", error)
-      // Use cached version if available
-      if (cached) {
-        setProfile(cached)
-      }
+      // Continue without profile data rather than blocking the app
     }
-  }, [user])
+  }
 
-  // Load profile when user changes with debouncing
-  useEffect(() => {
-    if (user && emailVerified) {
-      // Delay profile fetch to avoid blocking UI
-      const timeout = setTimeout(fetchProfile, 100)
-      return () => clearTimeout(timeout)
-    } else {
-      setProfile(null)
+  const sendGameInvitations = async (gameSessionId: string, invitedUserIds: string[]) => {
+    if (!invitedUserIds.length) return
+
+    try {
+      // Send invitations to all selected friends
+      const invitations = invitedUserIds.map((friendId) => ({
+        game_session_id: gameSessionId,
+        inviter_id: user!.id,
+        invitee_id: friendId,
+        status: "pending" as const,
+      }))
+
+      const { error } = await supabase.from("game_invitations").insert(invitations)
+
+      if (error) {
+        console.error("Error sending invitations:", error)
+      } else {
+        console.log(`Sent ${invitations.length} game invitations`)
+      }
+    } catch (error) {
+      console.error("Error sending game invitations:", error)
     }
-  }, [user, emailVerified, fetchProfile])
+  }
 
-  // Optimized game invitation sending
-  const sendGameInvitations = useCallback(
-    async (gameSessionId: string, invitedUserIds: string[]) => {
-      if (!invitedUserIds.length || !user) return
-
-      try {
-        const invitations = invitedUserIds.map((friendId) => ({
-          game_session_id: gameSessionId,
-          inviter_id: user.id,
-          invitee_id: friendId,
-          status: "pending" as const,
-        }))
-
-        const { error } = await supabase.from("game_invitations").insert(invitations)
-
-        if (error) {
-          console.error("Error sending invitations:", error)
-        } else {
-          console.log(`Sent ${invitations.length} game invitations`)
-        }
-      } catch (error) {
-        console.error("Error sending game invitations:", error)
+  const saveGameSessionToDatabase = async (session: GameSession) => {
+    try {
+      // Prepare the insert data
+      const insertData: any = {
+        id: session.id,
+        user_id: user!.id,
+        name: session.name,
+        start_time: session.startTime,
+        end_time: session.endTime,
+        status: session.status,
+        point_to_cash_rate: session.pointToCashRate,
+        players_data: session.playersInGame,
+        game_metadata: {
+          standardBuyInAmount: session.standardBuyInAmount,
+        },
       }
-    },
-    [user],
-  )
 
-  // Database operations with better error handling
-  const saveGameSessionToDatabase = useCallback(
-    async (session: GameSession) => {
-      if (!user) throw new Error("No user logged in")
-
-      try {
-        const insertData: any = {
-          id: session.id,
-          user_id: user.id,
-          name: session.name,
-          start_time: session.startTime,
-          end_time: session.endTime,
-          status: session.status,
-          point_to_cash_rate: session.pointToCashRate,
-          players_data: session.playersInGame,
-          game_metadata: {
-            standardBuyInAmount: session.standardBuyInAmount,
-          },
-        }
-
-        if (session.invitedUsers && session.invitedUsers.length > 0) {
-          insertData.invited_users = session.invitedUsers
-        }
-
-        const { error } = await supabase.from("game_sessions").insert(insertData)
-        if (error) throw error
-
-        console.log("Game session saved to database")
-      } catch (error) {
-        console.error("Error saving game session:", error)
-        throw error
+      // Only add invited_users if the session has them and they exist
+      if (session.invitedUsers && session.invitedUsers.length > 0) {
+        insertData.invited_users = session.invitedUsers
       }
-    },
-    [user],
-  )
 
-  const updateGameSessionInDatabase = useCallback(
-    async (session: GameSession) => {
-      if (!user) throw new Error("No user logged in")
+      const { error } = await supabase.from("game_sessions").insert(insertData)
 
+      if (error) throw error
+    } catch (error) {
+      console.error("Error saving game session:", error)
+      throw error
+    }
+  }
+
+  const updateGameSessionInDatabase = async (session: GameSession) => {
+    try {
+      console.log("Updating session in database:", session.id, session.status)
+
+      // Only allow updates if user is the owner
       if (session.isOwner === false) {
+        console.error("User is not the owner of this game, cannot update")
         throw new Error("You don't have permission to update this game")
       }
 
-      try {
-        const updateData: any = {
-          name: session.name,
-          end_time: session.endTime,
-          status: session.status,
-          point_to_cash_rate: session.pointToCashRate,
-          players_data: session.playersInGame,
-          game_metadata: {
-            standardBuyInAmount: session.standardBuyInAmount,
-          },
-        }
+      // Prepare the update data
+      const updateData: any = {
+        name: session.name,
+        end_time: session.endTime,
+        status: session.status,
+        point_to_cash_rate: session.pointToCashRate,
+        players_data: session.playersInGame,
+        game_metadata: {
+          standardBuyInAmount: session.standardBuyInAmount,
+        },
+      }
 
-        if (session.invitedUsers) {
-          updateData.invited_users = session.invitedUsers
-        }
+      // Only add invited_users if the session has them
+      if (session.invitedUsers) {
+        updateData.invited_users = session.invitedUsers
+      }
 
-        const { error } = await supabase
-          .from("game_sessions")
-          .update(updateData)
-          .eq("id", session.id)
-          .eq("user_id", user.id)
+      const { error } = await supabase
+        .from("game_sessions")
+        .update(updateData)
+        .eq("id", session.id)
+        .eq("user_id", user!.id)
 
-        if (error) throw error
-
-        console.log("Game session updated in database")
-      } catch (error) {
-        console.error("Error updating game session:", error)
+      if (error) {
+        console.error("Database update error:", error)
         throw error
       }
-    },
-    [user],
-  )
 
-  const updateUserStatsAfterGameCompletion = useCallback(
-    async (session: GameSession) => {
-      if (!user) return
+      console.log("Session updated successfully in database")
+    } catch (error) {
+      console.error("Error updating session:", error)
+      throw error
+    }
+  }
 
-      try {
-        const allParticipantIds = [user.id, ...(session.invitedUsers || [])]
+  const updateUserStatsAfterGameCompletion = async (session: GameSession) => {
+    if (!user) return
 
-        const { data: participantProfiles, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id, full_name")
-          .in("id", allParticipantIds)
+    try {
+      // Get all users who should have their stats updated (host + invited users who accepted)
+      const allParticipantIds = [user.id, ...(session.invitedUsers || [])]
 
-        if (profilesError) {
-          console.error("Error fetching participant profiles:", profilesError)
-          return
-        }
+      // Get profiles for all participants
+      const { data: participantProfiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name")
+        .in("id", allParticipantIds)
 
-        for (const participantProfile of participantProfiles) {
-          const userPlayer = session.playersInGame.find(
-            (player) => player.name.toLowerCase() === participantProfile.full_name?.toLowerCase(),
-          )
+      if (profilesError) {
+        console.error("Error fetching participant profiles:", profilesError)
+        return
+      }
 
-          if (userPlayer) {
-            const totalBuyIn = userPlayer.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
-            const profitLoss = userPlayer.cashOutAmount - totalBuyIn
+      // Update stats for each participant who played in the game
+      for (const participantProfile of participantProfiles) {
+        const userPlayer = session.playersInGame.find(
+          (player) => player.name.toLowerCase() === participantProfile.full_name?.toLowerCase(),
+        )
 
-            const { error } = await supabase.rpc("update_user_game_stats", {
-              user_id_param: participantProfile.id,
-              profit_loss_amount: profitLoss,
-            })
+        if (userPlayer) {
+          // Calculate user's profit/loss for this game
+          const totalBuyIn = userPlayer.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
+          const profitLoss = userPlayer.cashOutAmount - totalBuyIn
 
-            if (error) {
-              console.error(`Error updating stats for user ${participantProfile.id}:`, error)
-            } else {
-              console.log(`Updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
-            }
+          // Update user stats in database
+          const { error } = await supabase.rpc("update_user_game_stats", {
+            user_id_param: participantProfile.id,
+            profit_loss_amount: profitLoss,
+          })
+
+          if (error) {
+            console.error(`Error updating stats for user ${participantProfile.id}:`, error)
+          } else {
+            console.log(`Updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
           }
         }
-      } catch (error) {
-        console.error("Error updating user stats:", error)
       }
-    },
-    [user],
-  )
+    } catch (error) {
+      console.error("Error updating user stats:", error)
+    }
+  }
 
-  const createPlayerWithBuyIn = useCallback(
-    (name: string, standardBuyInAmount: number, pointToCashRate: number): PlayerInGame => {
-      const initialBuyIn = {
-        logId: generateLogId(),
-        amount: standardBuyInAmount,
-        time: new Date().toISOString(),
-      }
+  const createPlayerWithBuyIn = (name: string, standardBuyInAmount: number, pointToCashRate: number): PlayerInGame => {
+    const initialBuyIn = {
+      logId: generateLogId(),
+      amount: standardBuyInAmount,
+      time: new Date().toISOString(),
+    }
 
-      const pointsFromBuyIn = Math.floor(standardBuyInAmount / pointToCashRate)
+    const pointsFromBuyIn = Math.floor(standardBuyInAmount / pointToCashRate)
 
-      return {
-        playerId: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        name: name,
-        pointStack: pointsFromBuyIn,
-        buyIns: [initialBuyIn],
-        cashOutAmount: 0,
-        cashOutLog: [],
-        status: "active",
-      }
-    },
-    [],
-  )
+    return {
+      playerId: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: name,
+      pointStack: pointsFromBuyIn,
+      buyIns: [initialBuyIn],
+      cashOutAmount: 0,
+      cashOutLog: [],
+      status: "active",
+    }
+  }
 
-  const handleAddNewPlayerGlobally = useCallback(async (name: string): Promise<Player | null> => {
+  const handleAddNewPlayerGlobally = async (name: string): Promise<Player | null> => {
     if (!name.trim()) {
       alert("Player name cannot be empty.")
       return null
     }
     return { id: generateId(), name: name.trim() }
-  }, [])
+  }
 
-  const handleStartNewGame = useCallback(
-    async (session: GameSession) => {
-      const newSessionWithDefaults = {
-        ...session,
-        currentPhysicalPointsOnTable: 0,
-        playersInGame: [],
-      }
+  const handleStartNewGame = async (session: GameSession) => {
+    const newSessionWithDefaults = {
+      ...session,
+      currentPhysicalPointsOnTable: 0,
+      playersInGame: [],
+    }
 
-      // Automatically add the current user as a player with standard buy-in
-      if (user && profile?.full_name) {
-        const userPlayerWithBuyIn = createPlayerWithBuyIn(
-          profile.full_name,
-          session.standardBuyInAmount,
-          session.pointToCashRate,
-        )
+    // Automatically add the current user as a player with standard buy-in
+    if (user && profile?.full_name) {
+      const userPlayerWithBuyIn = createPlayerWithBuyIn(
+        profile.full_name,
+        session.standardBuyInAmount,
+        session.pointToCashRate,
+      )
 
-        newSessionWithDefaults.playersInGame = [userPlayerWithBuyIn]
-        newSessionWithDefaults.currentPhysicalPointsOnTable = userPlayerWithBuyIn.pointStack
-      }
+      newSessionWithDefaults.playersInGame = [userPlayerWithBuyIn]
+      newSessionWithDefaults.currentPhysicalPointsOnTable = userPlayerWithBuyIn.pointStack
+    }
 
-      try {
-        await saveGameSessionToDatabase(newSessionWithDefaults)
+    try {
+      await saveGameSessionToDatabase(newSessionWithDefaults)
 
-        if (session.invitedUsers && session.invitedUsers.length > 0) {
-          try {
-            await sendGameInvitations(newSessionWithDefaults.id, session.invitedUsers)
-          } catch (error) {
-            console.error("Error sending invitations:", error)
-          }
+      // Send invitations to selected friends (only if invitations system is available)
+      if (session.invitedUsers && session.invitedUsers.length > 0) {
+        try {
+          await sendGameInvitations(newSessionWithDefaults.id, session.invitedUsers)
+        } catch (error) {
+          console.error("Error sending invitations (feature may not be available yet):", error)
+          // Don't fail the game creation if invitations fail
         }
-
-        addSession(newSessionWithDefaults)
-        setActiveGameId(newSessionWithDefaults.id)
-        setCurrentView("activeGame")
-      } catch (error) {
-        alert("Failed to create game. Please try again.")
       }
-    },
-    [user, profile, createPlayerWithBuyIn, saveGameSessionToDatabase, sendGameInvitations, addSession],
-  )
 
-  const handleSelectGame = useCallback((gameId: string) => {
+      setGameSessions((prevSessions) => [...prevSessions, newSessionWithDefaults])
+      setActiveGameId(newSessionWithDefaults.id)
+      setCurrentView("activeGame")
+    } catch (error) {
+      alert("Failed to create game. Please try again.")
+    }
+  }
+
+  const handleSelectGame = (gameId: string) => {
     setActiveGameId(gameId)
     setCurrentView("activeGame")
-  }, [])
+  }
 
-  const handleUpdateSession = useCallback(
-    async (updatedSession: GameSession) => {
-      try {
-        if (updatedSession.isOwner === false) {
-          alert("You don't have permission to modify this game.")
-          return
-        }
-
-        await updateGameSessionInDatabase(updatedSession)
-        updateSession(updatedSession.id, updatedSession)
-        console.log("Session updated successfully")
-      } catch (error) {
-        console.error("Error updating session:", error)
-
-        if (updatedSession.isOwner === false) {
-          alert("Failed to update game. You may not have permission to modify this game.")
-          return
-        }
-
-        // Still update local state for owners even if database update fails
-        updateSession(updatedSession.id, updatedSession)
-        console.warn("Session updated locally but may not be saved to database")
-      }
-    },
-    [updateGameSessionInDatabase, updateSession],
-  )
-
-  const handleEndGame = useCallback(
-    async (finalizedSession: GameSession) => {
-      const completedSession = {
-        ...finalizedSession,
-        status: "completed" as const,
-        endTime: finalizedSession.endTime || new Date().toISOString(),
-        currentPhysicalPointsOnTable: 0,
+  const handleUpdateSession = async (updatedSession: GameSession) => {
+    try {
+      // Only allow updates if user is the owner
+      if (updatedSession.isOwner === false) {
+        console.error("User is not the owner of this game, cannot update")
+        alert("You don't have permission to modify this game.")
+        return
       }
 
-      try {
-        await updateGameSessionInDatabase(completedSession)
-        await updateUserStatsAfterGameCompletion(completedSession)
-        updateSession(completedSession.id, completedSession)
-      } catch (error) {
-        console.error("Error ending game:", error)
-        updateSession(completedSession.id, completedSession)
+      // Update database first
+      await updateGameSessionInDatabase(updatedSession)
+
+      // Then update local state
+      setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
+
+      console.log("Session updated successfully")
+    } catch (error) {
+      console.error("Error updating session:", error)
+
+      // Don't update local state if database update fails for non-owners
+      if (updatedSession.isOwner === false) {
+        alert("Failed to update game. You may not have permission to modify this game.")
+        return
       }
-    },
-    [updateGameSessionInDatabase, updateUserStatsAfterGameCompletion, updateSession],
-  )
 
-  const handleDeleteGame = useCallback(
-    async (sessionId: string) => {
-      try {
-        const gameToDelete = gameSessions.find((s) => s.id === sessionId)
+      // Still update local state for owners even if database update fails
+      setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
 
-        if (!gameToDelete) {
-          alert("Game not found.")
-          return
-        }
+      // Show user a warning but don't block the action
+      console.warn("Session updated locally but may not be saved to database")
+    }
+  }
 
-        if (gameToDelete.isOwner !== false) {
-          const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
+  const handleEndGame = async (finalizedSession: GameSession) => {
+    const completedSession = {
+      ...finalizedSession,
+      status: "completed" as const,
+      endTime: finalizedSession.endTime || new Date().toISOString(),
+      currentPhysicalPointsOnTable: 0,
+    }
 
-          if (error) throw error
-          console.log("Game deleted successfully from database")
-        } else {
-          try {
-            await supabase.from("game_invitations").delete().eq("game_session_id", sessionId).eq("invitee_id", user!.id)
-            console.log("Invitation record removed")
-          } catch (error) {
-            console.warn("Could not remove invitation record:", error)
-          }
-        }
+    try {
+      await updateGameSessionInDatabase(completedSession)
 
-        removeSession(sessionId)
+      // Update stats for all participants (host + invited users)
+      await updateUserStatsAfterGameCompletion(completedSession)
 
-        if (activeGameId === sessionId) {
-          setActiveGameId(null)
-          setCurrentView("dashboard")
-        }
+      setGameSessions((prevSessions) => {
+        return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
+      })
+    } catch (error) {
+      console.error("Error ending game:", error)
+      setGameSessions((prevSessions) => {
+        return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
+      })
+    }
+  }
 
-        console.log(gameToDelete.isOwner !== false ? "Game deleted successfully" : "Game removed from dashboard")
-      } catch (error) {
-        console.error("Error deleting/removing game:", error)
-        alert("Failed to delete/remove game. Please try again.")
+  const handleDeleteGame = async (sessionId: string) => {
+    try {
+      const gameToDelete = gameSessions.find((s) => s.id === sessionId)
+
+      if (!gameToDelete) {
+        alert("Game not found.")
+        return
       }
-    },
-    [gameSessions, user, removeSession, activeGameId],
-  )
 
-  const handleNavigateToDashboard = useCallback(() => {
+      // If user is the owner, delete from database
+      if (gameToDelete.isOwner !== false) {
+        // Delete from database first
+        const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
+
+        if (error) {
+          console.error("Database delete error:", error)
+          throw error
+        }
+        console.log("Game deleted successfully from database")
+      } else {
+        // If user was invited, just remove from local state (don't delete from database)
+        // Optionally, we could also remove the invitation record
+        try {
+          await supabase.from("game_invitations").delete().eq("game_session_id", sessionId).eq("invitee_id", user!.id)
+
+          console.log("Invitation record removed")
+        } catch (error) {
+          console.warn("Could not remove invitation record (non-critical):", error)
+        }
+      }
+
+      // Update local state (remove from UI)
+      setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
+
+      // If this was the active game, navigate back to dashboard
+      if (activeGameId === sessionId) {
+        setActiveGameId(null)
+        setCurrentView("dashboard")
+      }
+
+      console.log(gameToDelete.isOwner !== false ? "Game deleted successfully" : "Game removed from dashboard")
+    } catch (error) {
+      console.error("Error deleting/removing game:", error)
+      alert("Failed to delete/remove game. Please try again.")
+    }
+  }
+
+  const handleNavigateToDashboard = () => {
     setCurrentView("dashboard")
     setActiveGameId(null)
-  }, [])
-
-  const handleForceRefresh = useCallback(async () => {
-    try {
-      console.log("Force refreshing application state...")
-
-      // Clear caches
-      profileCacheRef.current = {}
-      lastProfileFetchRef.current = {}
-
-      await Promise.all([forceAuthRefresh(), forceGameStateRefresh()])
-      console.log("Force refresh completed")
-    } catch (error) {
-      console.error("Force refresh failed:", error)
-    }
-  }, [forceAuthRefresh, forceGameStateRefresh])
+  }
 
   const getBackgroundClass = () => {
     if (currentView === "dashboard") {
       return "dashboard-background"
     }
     return "default-background"
-  }
-
-  const renderConnectionStatus = () => {
-    if (!isConnected && user) {
-      return (
-        <div className="bg-yellow-900/20 border border-yellow-800 text-yellow-400 px-4 py-2 text-sm">
-          <div className="flex items-center justify-between">
-            <span>
-              {reconnectAttempts > 0
-                ? `Reconnecting... (${reconnectAttempts}/3)`
-                : "Connection lost. Some features may be limited."}
-            </span>
-            <button onClick={handleForceRefresh} className="text-yellow-300 hover:text-yellow-100 underline ml-4">
-              Retry
-            </button>
-          </div>
-        </div>
-      )
-    }
-
-    if (gameStateError) {
-      return (
-        <div className="bg-red-900/20 border border-red-800 text-red-400 px-4 py-2 text-sm">
-          <div className="flex items-center justify-between">
-            <span>Error: {gameStateError}</span>
-            <button onClick={clearGameStateError} className="text-red-300 hover:text-red-100 underline ml-4">
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )
-    }
-
-    if (!isOnline) {
-      return (
-        <div className="bg-orange-900/20 border border-orange-800 text-orange-400 px-4 py-2 text-sm">
-          <span>You're offline. Changes will sync when connection is restored.</span>
-        </div>
-      )
-    }
-
-    return null
   }
 
   const renderView = () => {
@@ -613,7 +607,7 @@ export default function Home() {
         <div className="min-h-screen flex items-center justify-center bg-surface-main">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
-            <p className="text-text-secondary">Initializing...</p>
+            <p className="text-text-secondary">Loading...</p>
           </div>
         </div>
       )
@@ -656,11 +650,6 @@ export default function Home() {
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
             <p className="text-text-secondary">Loading your data...</p>
-            {lastSyncTime && (
-              <p className="text-text-secondary text-xs mt-2">
-                Last sync: {new Date(lastSyncTime).toLocaleTimeString()}
-              </p>
-            )}
           </div>
         </div>
       )
@@ -719,9 +708,6 @@ export default function Home() {
 
   return (
     <div className={`min-h-screen flex flex-col bg-surface-main ${getBackgroundClass()}`}>
-      {/* Connection status bar */}
-      {renderConnectionStatus()}
-
       {/* Only show navbar if user is verified */}
       {user && emailVerified && (
         <Navbar
@@ -735,29 +721,11 @@ export default function Home() {
           user={user}
         />
       )}
-
       <main className="flex-grow bg-transparent">{renderView()}</main>
-
       {/* Only show footer if user is verified */}
       {user && emailVerified && (
         <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
-          <div className="flex flex-col sm:flex-row items-center justify-between">
-            <span>Poker Homegame Manager V53 - Optimized Performance &copy; {new Date().getFullYear()}</span>
-            <div className="flex items-center space-x-4 mt-2 sm:mt-0 text-xs">
-              <span className={`flex items-center ${isOnline ? "text-green-400" : "text-red-400"}`}>
-                <div className={`w-2 h-2 rounded-full mr-1 ${isOnline ? "bg-green-400" : "bg-red-400"}`}></div>
-                {isOnline ? "Online" : "Offline"}
-              </span>
-              {lastSyncTime && (
-                <span className="text-slate-400">Synced: {new Date(lastSyncTime).toLocaleTimeString()}</span>
-              )}
-              {performanceMonitorRef.current && (
-                <span className="text-slate-400">
-                  Perf: {performanceMonitorRef.current.getLatestMetrics()?.memoryUsage.toFixed(1) || "0"}MB
-                </span>
-              )}
-            </div>
-          </div>
+          Poker Homegame Manager V50 &copy; {new Date().getFullYear()}
         </footer>
       )}
 
