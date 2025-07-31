@@ -59,6 +59,7 @@ export default function Home() {
   const loadUserData = async () => {
     try {
       setLoading(true)
+      console.log("🔄 Loading user data for:", user!.id)
 
       // Load games created by the user
       let sessionsData
@@ -74,6 +75,7 @@ export default function Home() {
 
         sessionsData = result.data
         sessionsError = result.error
+        console.log("✅ Loaded owned games:", sessionsData?.length || 0)
       } catch (error) {
         console.log("invited_users column doesn't exist yet, falling back to basic query")
 
@@ -96,6 +98,7 @@ export default function Home() {
       // Also load games where the user has accepted invitations
       let invitedGamesData = []
       try {
+        console.log("🔍 Loading invited games...")
         const { data: acceptedInvitations, error: invitationsError } = await supabase
           .from("game_invitations")
           .select(`
@@ -109,6 +112,7 @@ export default function Home() {
 
         if (!invitationsError && acceptedInvitations) {
           invitedGamesData = acceptedInvitations.filter((inv) => inv.game_session).map((inv) => inv.game_session)
+          console.log("✅ Loaded invited games:", invitedGamesData.length)
         }
       } catch (error) {
         console.log("Game invitations not available yet, skipping invited games")
@@ -130,6 +134,11 @@ export default function Home() {
       })
 
       const combinedSessions = Array.from(allGamesMap.values())
+      console.log("📊 Total games loaded:", combinedSessions.length, {
+        owned: sessionsData?.length || 0,
+        invited: invitedGamesData.length,
+        combined: combinedSessions.length,
+      })
 
       // Transform database data to match our types with enhanced validation
       const transformedSessions: GameSession[] = combinedSessions.map((session) => {
@@ -166,6 +175,7 @@ export default function Home() {
         return baseSession
       })
 
+      console.log("✅ Data transformation complete")
       setGameSessions(transformedSessions)
     } catch (error) {
       console.error("Error loading user data:", error)
@@ -269,6 +279,8 @@ export default function Home() {
     if (!invitedUserIds.length) return
 
     try {
+      console.log("📨 Sending game invitations:", { gameSessionId, invitedUserIds })
+
       // Send invitations to all selected friends
       const invitations = invitedUserIds.map((friendId) => ({
         game_session_id: gameSessionId,
@@ -282,7 +294,7 @@ export default function Home() {
       if (error) {
         console.error("Error sending invitations:", error)
       } else {
-        console.log(`Sent ${invitations.length} game invitations`)
+        console.log(`✅ Sent ${invitations.length} game invitations`)
       }
     } catch (error) {
       console.error("Error sending game invitations:", error)
@@ -291,6 +303,8 @@ export default function Home() {
 
   const saveGameSessionToDatabase = async (session: GameSession) => {
     try {
+      console.log("💾 Saving game session to database:", session.id)
+
       // Prepare the insert data
       const insertData: any = {
         id: session.id,
@@ -314,6 +328,8 @@ export default function Home() {
       const { error } = await supabase.from("game_sessions").insert(insertData)
 
       if (error) throw error
+
+      console.log("✅ Game session saved successfully")
     } catch (error) {
       console.error("Error saving game session:", error)
       throw error
@@ -322,7 +338,7 @@ export default function Home() {
 
   const updateGameSessionInDatabase = async (session: GameSession) => {
     try {
-      console.log("Updating session in database:", session.id, session.status)
+      console.log("🔄 Updating session in database:", session.id, session.status)
 
       // Only allow updates if user is the owner
       if (session.isOwner === false) {
@@ -340,6 +356,7 @@ export default function Home() {
         game_metadata: {
           standardBuyInAmount: session.standardBuyInAmount,
         },
+        updated_at: new Date().toISOString(),
       }
 
       // Only add invited_users if the session has them
@@ -358,7 +375,7 @@ export default function Home() {
         throw error
       }
 
-      console.log("Session updated successfully in database")
+      console.log("✅ Session updated successfully in database")
     } catch (error) {
       console.error("Error updating session:", error)
       throw error
@@ -369,7 +386,7 @@ export default function Home() {
     if (!user) return
 
     try {
-      console.log("Starting user stats update for completed game:", session.id)
+      console.log("📊 Starting user stats update for completed game:", session.id)
 
       // Get all users who should have their stats updated (host + invited users who accepted)
       const allParticipantIds = [user.id, ...(session.invitedUsers || [])]
@@ -420,7 +437,7 @@ export default function Home() {
               console.error(`Error updating stats for user ${participantProfile.id}:`, error)
               // Continue with other users even if one fails
             } else {
-              console.log(`Successfully updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
+              console.log(`✅ Successfully updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
             }
           } else {
             console.log(`No matching player found for profile ${participantProfile.full_name} in game data`)
@@ -431,7 +448,7 @@ export default function Home() {
         }
       }
 
-      console.log("User stats update completed")
+      console.log("✅ User stats update completed")
     } catch (error) {
       console.error("Error updating user stats:", error)
       // Don't throw the error - stats update failure shouldn't prevent game completion
@@ -526,7 +543,7 @@ export default function Home() {
       // Then update local state
       setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
 
-      console.log("Session updated successfully")
+      console.log("✅ Session updated successfully")
     } catch (error) {
       console.error("Error updating session:", error)
 
@@ -587,14 +604,14 @@ export default function Home() {
           console.error("Database delete error:", error)
           throw error
         }
-        console.log("Game deleted successfully from database")
+        console.log("✅ Game deleted successfully from database")
       } else {
         // If user was invited, just remove from local state (don't delete from database)
         // Optionally, we could also remove the invitation record
         try {
           await supabase.from("game_invitations").delete().eq("game_session_id", sessionId).eq("invitee_id", user!.id)
 
-          console.log("Invitation record removed")
+          console.log("✅ Invitation record removed")
         } catch (error) {
           console.warn("Could not remove invitation record (non-critical):", error)
         }
@@ -758,7 +775,7 @@ export default function Home() {
       {/* Only show footer if user is verified */}
       {user && emailVerified && (
         <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
-          Poker Homegame Manager V50 &copy; {new Date().getFullYear()}
+          Poker Homegame Manager V51 &copy; {new Date().getFullYear()}
           {process.env.NODE_ENV === "development" && (
             <div className="mt-2 space-x-4">
               <button

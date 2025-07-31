@@ -138,104 +138,77 @@ interface GameInvitationCardProps {
 }
 
 const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onInvitationHandled }) => {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [acceptLoading, setAcceptLoading] = useState(false)
   const [declineLoading, setDeclineLoading] = useState(false)
   const [error, setError] = useState("")
+  const [debugInfo, setDebugInfo] = useState<any>(null)
 
   const handleAccept = async () => {
-    if (!user) return
+    if (!user || !profile) {
+      setError("User profile not available. Please refresh and try again.")
+      return
+    }
 
     setAcceptLoading(true)
     setError("")
+    setDebugInfo(null)
 
     try {
-      // First, get the user's profile to use their name
-      const { data: userProfile, error: profileError } = await supabase
-        .from("profiles")
-        .select("full_name, email")
-        .eq("id", user.id)
-        .single()
+      console.log("Starting invitation acceptance process...", {
+        invitationId: invitation.id,
+        gameSessionId: invitation.game_session_id,
+        userId: user.id,
+        userProfile: profile,
+      })
 
-      if (profileError) {
-        throw new Error("Could not fetch user profile")
+      // Use the database function to accept the invitation
+      const { data, error: acceptError } = await supabase.rpc("accept_game_invitation", {
+        invitation_id: invitation.id,
+      })
+
+      if (acceptError) {
+        console.error("Error accepting invitation via function:", acceptError)
+        throw new Error(`Failed to accept invitation: ${acceptError.message}`)
       }
 
-      // Get the game session details
-      const { data: gameSession, error: gameError } = await supabase
+      console.log("Invitation accepted successfully via database function")
+
+      // Verify the acceptance by checking the updated game session
+      const { data: updatedSession, error: sessionError } = await supabase
         .from("game_sessions")
         .select("*")
         .eq("id", invitation.game_session_id)
         .single()
 
-      if (gameError || !gameSession) {
-        throw new Error("Could not fetch game session")
-      }
-
-      // Create a new player entry for the accepting user
-      const playerName = userProfile.full_name || userProfile.email || "Unknown User"
-      const standardBuyInAmount = gameSession.game_metadata?.standardBuyInAmount || 25
-      const pointToCashRate = gameSession.point_to_cash_rate || 0.1
-
-      const newPlayer = {
-        playerId: `invited-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        name: playerName,
-        pointStack: Math.floor(standardBuyInAmount / pointToCashRate),
-        buyIns: [
-          {
-            logId: `buyin-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            amount: standardBuyInAmount,
-            time: new Date().toISOString(),
-          },
-        ],
-        cashOutAmount: 0,
-        cashOutLog: [],
-        status: "active" as const,
-      }
-
-      // Get current players and add the new player
-      const currentPlayers = gameSession.players_data || []
-
-      // Check if user is already a player (by name matching)
-      const existingPlayer = currentPlayers.find((p: any) => p.name.toLowerCase() === playerName.toLowerCase())
-
-      let updatedPlayers = currentPlayers
-      if (!existingPlayer) {
-        updatedPlayers = [...currentPlayers, newPlayer]
-      }
-
-      // Update the game session with the new player
-      const { error: updateGameError } = await supabase
-        .from("game_sessions")
-        .update({
-          players_data: updatedPlayers,
+      if (sessionError) {
+        console.error("Error fetching updated session:", sessionError)
+      } else {
+        console.log("Updated session after acceptance:", {
+          playersCount: updatedSession.players_data?.length || 0,
+          invitedUsersCount: updatedSession.invited_users?.length || 0,
+          players: updatedSession.players_data?.map((p: any) => p.name) || [],
         })
-        .eq("id", invitation.game_session_id)
-
-      if (updateGameError) {
-        throw updateGameError
-      }
-
-      // Update the invitation status to accepted
-      const { error: updateError } = await supabase
-        .from("game_invitations")
-        .update({
-          status: "accepted",
-          updated_at: new Date().toISOString(),
+        setDebugInfo({
+          playersInGame: updatedSession.players_data?.length || 0,
+          invitedUsers: updatedSession.invited_users?.length || 0,
+          playerNames: updatedSession.players_data?.map((p: any) => p.name) || [],
         })
-        .eq("id", invitation.id)
-        .eq("invitee_id", user.id)
-
-      if (updateError) {
-        throw updateError
       }
 
-      // Refresh the page to show the updated game
+      // Show success message
+      setError("")
+
+      // Notify parent component and refresh
       onInvitationHandled()
-      window.location.reload()
+
+      // Force a page refresh after a short delay to ensure all data is updated
+      setTimeout(() => {
+        window.location.reload()
+      }, 1500)
     } catch (error: any) {
       console.error("Error accepting invitation:", error)
-      setError("Failed to accept invitation. Please try again.")
+      setError(`Failed to accept invitation: ${error.message}`)
     } finally {
       setAcceptLoading(false)
     }
@@ -248,6 +221,8 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
     setError("")
 
     try {
+      console.log("Declining invitation:", invitation.id)
+
       // Update the invitation status to declined
       const { error: updateError } = await supabase
         .from("game_invitations")
@@ -262,6 +237,8 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
         throw updateError
       }
 
+      console.log("Invitation declined successfully")
+
       // Remove the invitation from the UI
       onInvitationHandled()
     } catch (error: any) {
@@ -273,30 +250,66 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
   }
 
   return (
-    <Card className="mb-3 sm:mb-4">
+    <Card className="mb-3 sm:mb-4 border-blue-500">
       <div className="space-y-3">
-        <h4 className="text-base sm:text-lg font-semibold text-brand-primary truncate">Game Invitation</h4>
+        <h4 className="text-base sm:text-lg font-semibold text-blue-400 truncate">🎮 Game Invitation</h4>
         <div className="text-xs sm:text-sm text-text-secondary">
           <p>
-            <strong>{invitation.inviter_profile?.full_name || invitation.inviter_profile?.email}</strong> invited you to
-            join:
+            <strong className="text-white">
+              {invitation.inviter_profile?.full_name || invitation.inviter_profile?.email}
+            </strong>{" "}
+            invited you to join:
           </p>
-          <p className="text-white font-medium">{invitation.game_session?.name}</p>
-          <p>
-            Started:{" "}
+          <p className="text-white font-medium text-base mt-1">{invitation.game_session?.name}</p>
+          <p className="mt-2">
+            Game Started:{" "}
             {invitation.game_session?.start_time ? formatDate(invitation.game_session.start_time, false) : "N/A"}
           </p>
           <p>Invited: {formatDate(invitation.created_at, false)}</p>
+          <p className="text-green-400">Status: {invitation.game_session?.status || "Unknown"}</p>
         </div>
+
+        {debugInfo && (
+          <div className="bg-green-900/20 border border-green-600 rounded p-2 text-xs">
+            <p className="text-green-400 font-semibold">✅ Acceptance Successful!</p>
+            <p>Players in game: {debugInfo.playersInGame}</p>
+            <p>Invited users: {debugInfo.invitedUsers}</p>
+            <p>Player names: {debugInfo.playerNames.join(", ")}</p>
+          </div>
+        )}
+
         <div className="flex space-x-2">
-          <Button onClick={handleAccept} variant="primary" size="sm" disabled={acceptLoading}>
-            {acceptLoading ? "Accepting..." : "Accept"}
+          <Button
+            onClick={handleAccept}
+            variant="primary"
+            size="sm"
+            disabled={acceptLoading || declineLoading}
+            className="flex-1"
+          >
+            {acceptLoading ? (
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>Accepting...</span>
+              </div>
+            ) : (
+              "✅ Accept & Join Game"
+            )}
           </Button>
-          <Button onClick={handleDecline} variant="danger" size="sm" disabled={declineLoading}>
-            {declineLoading ? "Declining..." : "Decline"}
+          <Button
+            onClick={handleDecline}
+            variant="danger"
+            size="sm"
+            disabled={acceptLoading || declineLoading}
+            className="flex-1"
+          >
+            {declineLoading ? "Declining..." : "❌ Decline"}
           </Button>
         </div>
-        {error && <p className="text-sm text-red-500">{error}</p>}
+        {error && (
+          <div className="bg-red-900/20 border border-red-600 rounded p-2">
+            <p className="text-sm text-red-400">{error}</p>
+          </div>
+        )}
       </div>
     </Card>
   )
@@ -331,6 +344,8 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
     try {
       setLoadingInvitations(true)
+      console.log("Fetching pending invitations for user:", user.id)
+
       const { data, error } = await supabase
         .from("game_invitations")
         .select(`
@@ -340,11 +355,13 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         `)
         .eq("invitee_id", user.id)
         .eq("status", "pending")
+        .order("created_at", { ascending: false })
 
       if (error) {
         console.error("Error fetching pending invitations:", error)
         setPendingInvitations([])
       } else {
+        console.log("Fetched pending invitations:", data?.length || 0)
         setPendingInvitations(data || [])
       }
     } catch (error) {
@@ -493,7 +510,15 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
       {!loadingInvitations && pendingInvitations.length > 0 && (
         <section className="mb-8">
-          <h3 className="text-2xl font-semibold text-blue-400 mb-4">Game Invitations</h3>
+          <h3 className="text-2xl font-semibold text-blue-400 mb-4">
+            🎮 Game Invitations ({pendingInvitations.length})
+          </h3>
+          <div className="bg-blue-900/10 border border-blue-600 rounded-lg p-3 mb-4">
+            <p className="text-blue-200 text-sm">
+              💡 <strong>You have pending game invitations!</strong> Accept to join active games and start playing with
+              your friends.
+            </p>
+          </div>
           {pendingInvitations.map((invitation) => (
             <GameInvitationCard
               key={invitation.id}
