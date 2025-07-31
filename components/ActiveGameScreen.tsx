@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useMemo, useEffect } from "react"
-import type { GameSession, PlayerInGame, Player, CashOutLogRecord, BuyInRecord, Friendship } from "../types"
+import type { GameSession, PlayerInGame, Player, CashOutLogRecord, Friendship } from "../types"
 import {
   formatCurrency,
   formatDate,
@@ -17,8 +17,10 @@ import Modal from "./common/Modal"
 import Card from "./common/Card"
 import LiveTimer from "./common/LiveTimer"
 import PaymentSummary from "./PaymentSummary"
+import FriendInvitationDebugger from "./debug/FriendInvitationDebugger"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
+import { calculatePayments } from "../utils/paymentCalculator"
 
 interface ActiveGameScreenProps {
   session: GameSession
@@ -215,66 +217,429 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
   )
 }
 
-const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
+interface BuyInLog {
+  logId: string
+  amount: number
+  time: string
+}
+
+interface CashOutLog {
+  logId: string
+  amount: number
+  time: string
+}
+
+export default function ActiveGameScreen({
   session,
   players,
   onUpdateSession,
   onEndGame,
   onNavigateToDashboard,
   onAddNewPlayerGlobally,
-}) => {
+}: ActiveGameScreenProps) {
   const { user } = useAuth()
+  const [showAddPlayerModal, setShowAddPlayerModal] = useState(false)
+  const [showBuyInModal, setShowBuyInModal] = useState(false)
+  const [showCashOutModal, setShowCashOutModal] = useState(false)
+  const [showEndGameModal, setShowEndGameModal] = useState(false)
+  const [showCloseGameModal, setShowCloseGameModal] = useState(false)
+  const [showFinalizeGameModal, setShowFinalizeGameModal] = useState(false)
+  const [showInviteFriendsModal, setShowInviteFriendsModal] = useState(false)
+  const [selectedPlayer, setSelectedPlayer] = useState<PlayerInGame | null>(null)
+  const [newPlayerName, setNewPlayerName] = useState("")
+  const [buyInAmount, setBuyInAmount] = useState(session.standardBuyInAmount.toString())
+  const [cashOutAmount, setCashOutAmount] = useState("")
+  const [finalPointInputs, setFinalPointInputs] = useState<{ [playerId: string]: string }>({})
+  const [friends, setFriends] = useState<any[]>([])
+  const [selectedFriends, setSelectedFriends] = useState<string[]>([])
+  const [loadingFriends, setLoadingFriends] = useState(false)
+  const [showPaymentSummary, setShowPaymentSummary] = useState(false)
+  const [showFriendInviteDebugger, setShowFriendInviteDebugger] = useState(false)
   const [isAddPlayerModalOpen, setIsAddPlayerModalOpen] = useState(false)
   const [newPlayerNameInModal, setNewPlayerNameInModal] = useState("")
-
-  // Add Friend to Game states
   const [isInviteFriendsModalOpen, setIsInviteFriendsModalOpen] = useState(false)
-  const [friends, setFriends] = useState<Friendship[]>([])
-  const [loadingFriends, setLoadingFriends] = useState(false)
+  const [friendsOld, setFriendsOld] = useState<Friendship[]>([])
+  const [loadingFriendsOld, setLoadingFriendsOld] = useState(false)
   const [selectedFriendsToInvite, setSelectedFriendsToInvite] = useState<string[]>([])
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState("")
   const [inviteSuccess, setInviteSuccess] = useState("")
-
-  // Friend request states
+  const [showDebugger, setShowDebugger] = useState(false)
   const [friendRequestStates, setFriendRequestStates] = useState<Record<string, "none" | "pending" | "friends">>({})
   const [loadingFriendRequests, setLoadingFriendRequests] = useState<Record<string, boolean>>({})
   const [playersWithProfiles, setPlayersWithProfiles] = useState<Set<string>>(new Set())
-
   const [isBuyInModalOpen, setIsBuyInModalOpen] = useState(false)
   const [buyInPlayerId, setBuyInPlayerId] = useState<string | null>(null)
-  const [buyInAmount, setBuyInAmount] = useState<number>(25)
-
+  const [buyInAmountOld, setBuyInAmountOld] = useState<number>(25)
   const [isCashOutModalOpen, setIsCashOutModalOpen] = useState(false)
   const [cashOutPlayerId, setCashOutPlayerId] = useState<string | null>(null)
   const [cashOutPointAmount, setCashOutPointAmount] = useState<string>("")
-
-  // Buy-in editing states
   const [isEditBuyInModalOpen, setIsEditBuyInModalOpen] = useState(false)
   const [editingBuyIn, setEditingBuyIn] = useState<{ playerId: string; buyInLogId: string; amount: number } | null>(
     null,
   )
   const [editBuyInAmount, setEditBuyInAmount] = useState<number>(0)
-
-  // Buy-in deletion states
   const [isDeleteBuyInModalOpen, setIsDeleteBuyInModalOpen] = useState(false)
   const [deletingBuyIn, setDeletingBuyIn] = useState<{ playerId: string; buyInLogId: string; amount: number } | null>(
     null,
   )
-
   const [formError, setFormError] = useState("")
-
   const [isCloseGameConfirmModalOpen, setIsCloseGameConfirmModalOpen] = useState(false)
-
   const [isFinalizeResultsModalOpen, setIsFinalizeResultsModalOpen] = useState(false)
-  const [finalPointInputs, setFinalPointInputs] = useState<Array<{ playerId: string; name: string; points: string }>>(
-    [],
-  )
+  const [finalPointInputsOld, setFinalPointInputsOld] = useState<
+    Array<{ playerId: string; name: string; points: string }>
+  >([])
   const [physicalPointsForFinalize, setPhysicalPointsForFinalize] = useState<number>(0)
   const [finalizeFormError, setFinalizeFormError] = useState("")
+  const isGameOwner = session.isOwner !== false
+  const [showConfirmCloseModal, setShowConfirmCloseModal] = useState(false)
+
+  // Initialize final point inputs when entering pending_close state
+  useEffect(() => {
+    if (session.status === "pending_close") {
+      const inputs: { [playerId: string]: string } = {}
+      session.playersInGame.forEach((player) => {
+        if (player.status === "active") {
+          inputs[player.playerId] = (player.pointStack || 0).toString()
+        }
+      })
+      setFinalPointInputs(inputs)
+    }
+  }, [session.status, session.playersInGame])
+
+  // Load friends when invite modal opens
+  useEffect(() => {
+    if (showInviteFriendsModal) {
+      loadFriends()
+    }
+  }, [showInviteFriendsModal])
+
+  const loadFriends = async () => {
+    if (!user) return
+
+    setLoadingFriends(true)
+    try {
+      // Get accepted friendships where current user is either the requester or receiver
+      const { data: friendships, error } = await supabase
+        .from("friendships")
+        .select(`
+          id,
+          requester_id,
+          receiver_id,
+          requester:profiles!friendships_requester_id_fkey(id, full_name, email),
+          receiver:profiles!friendships_receiver_id_fkey(id, full_name, email)
+        `)
+        .eq("status", "accepted")
+        .or(`requester_id.eq.${user.id},receiver_id.eq.${user.id}`)
+
+      if (error) {
+        console.error("Error loading friends:", error)
+        return
+      }
+
+      // Transform friendships to get the friend (not the current user)
+      const friendsList =
+        friendships?.map((friendship) => {
+          const isRequester = friendship.requester_id === user.id
+          return isRequester ? friendship.receiver : friendship.requester
+        }) || []
+
+      // Filter out friends who are already invited to this game
+      const uninvitedFriends = friendsList.filter((friend) => !session.invitedUsers?.includes(friend.id))
+
+      setFriends(uninvitedFriends)
+    } catch (error) {
+      console.error("Error loading friends:", error)
+    } finally {
+      setLoadingFriends(false)
+    }
+  }
+
+  const handleInviteFriendsToGame = async () => {
+    if (!user || selectedFriends.length === 0) return
+
+    try {
+      console.log("Inviting friends to game:", selectedFriends)
+
+      // Send invitations to selected friends
+      const invitations = selectedFriends.map((friendId) => ({
+        game_session_id: session.id,
+        inviter_id: user.id,
+        invitee_id: friendId,
+        status: "pending" as const,
+      }))
+
+      const { error: inviteError } = await supabase.from("game_invitations").insert(invitations)
+
+      if (inviteError) {
+        console.error("Error sending invitations:", inviteError)
+        alert("Failed to send invitations. Please try again.")
+        return
+      }
+
+      // Update the game session with new invited users
+      const updatedInvitedUsers = [...(session.invitedUsers || []), ...selectedFriends]
+      const updatedSession = {
+        ...session,
+        invitedUsers: updatedInvitedUsers,
+      }
+
+      console.log("Updating session with new invited users:", updatedInvitedUsers)
+
+      // Update the session in database
+      const { error: updateError } = await supabase
+        .from("game_sessions")
+        .update({ invited_users: updatedInvitedUsers })
+        .eq("id", session.id)
+        .eq("user_id", user.id)
+
+      if (updateError) {
+        console.error("Error updating game session:", updateError)
+        alert("Invitations sent but failed to update game. Please refresh the page.")
+        return
+      }
+
+      // CRITICAL FIX: Call onUpdateSession to propagate changes to parent component
+      onUpdateSession(updatedSession)
+
+      // Reset state and close modal
+      setSelectedFriends([])
+      setShowInviteFriendsModal(false)
+
+      alert(`Successfully invited ${selectedFriends.length} friend(s) to the game!`)
+    } catch (error) {
+      console.error("Error inviting friends:", error)
+      alert("Failed to invite friends. Please try again.")
+    }
+  }
+
+  const handleAddPlayer = async () => {
+    if (!newPlayerName.trim()) {
+      alert("Please enter a player name.")
+      return
+    }
+
+    // Check if player name already exists in the game
+    const existingPlayer = session.playersInGame.find(
+      (p) => p.name.toLowerCase() === newPlayerName.trim().toLowerCase(),
+    )
+    if (existingPlayer) {
+      alert("A player with this name already exists in the game.")
+      return
+    }
+
+    // Add player globally first
+    const newGlobalPlayer = await onAddNewPlayerGlobally(newPlayerName.trim())
+    if (!newGlobalPlayer) return
+
+    // Create player with initial buy-in
+    const initialBuyIn = {
+      logId: generateLogId(),
+      amount: session.standardBuyInAmount,
+      time: new Date().toISOString(),
+    }
+
+    const pointsFromBuyIn = Math.floor(session.standardBuyInAmount / session.pointToCashRate)
+
+    const newPlayerInGame: PlayerInGame = {
+      playerId: newGlobalPlayer.id,
+      name: newPlayerName.trim(),
+      pointStack: pointsFromBuyIn,
+      buyIns: [initialBuyIn],
+      cashOutAmount: 0,
+      cashOutLog: [],
+      status: "active",
+    }
+
+    const updatedSession = {
+      ...session,
+      playersInGame: [...session.playersInGame, newPlayerInGame],
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + pointsFromBuyIn,
+    }
+
+    onUpdateSession(updatedSession)
+    setNewPlayerName("")
+    setShowAddPlayerModal(false)
+  }
+
+  const handleBuyIn = () => {
+    if (!selectedPlayer) return
+
+    const amount = Number.parseFloat(buyInAmount)
+    if (isNaN(amount) || amount <= 0) {
+      alert("Please enter a valid buy-in amount.")
+      return
+    }
+
+    const newBuyIn = {
+      logId: generateLogId(),
+      amount: amount,
+      time: new Date().toISOString(),
+    }
+
+    const pointsFromBuyIn = Math.floor(amount / session.pointToCashRate)
+
+    const updatedPlayersInGame = session.playersInGame.map((player) => {
+      if (player.playerId === selectedPlayer.playerId) {
+        return {
+          ...player,
+          pointStack: player.pointStack + pointsFromBuyIn,
+          buyIns: [...player.buyIns, newBuyIn],
+        }
+      }
+      return player
+    })
+
+    const updatedSession = {
+      ...session,
+      playersInGame: updatedPlayersInGame,
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + pointsFromBuyIn,
+    }
+
+    onUpdateSession(updatedSession)
+    setBuyInAmount(session.standardBuyInAmount.toString())
+    setShowBuyInModal(false)
+    setSelectedPlayer(null)
+  }
+
+  const handleCashOut = () => {
+    if (!selectedPlayer) return
+
+    const amount = Number.parseFloat(cashOutAmount)
+    if (isNaN(amount) || amount < 0) {
+      alert("Please enter a valid cash out amount.")
+      return
+    }
+
+    const cashOutLog = {
+      logId: generateLogId(),
+      amount: amount,
+      time: new Date().toISOString(),
+    }
+
+    const updatedPlayersInGame = session.playersInGame.map((player) => {
+      if (player.playerId === selectedPlayer.playerId) {
+        return {
+          ...player,
+          cashOutAmount: amount,
+          cashOutLog: [...player.cashOutLog, cashOutLog],
+          status: "cashed_out_early" as const,
+          pointsLeftOnTable: player.pointStack, // Track points left on table
+        }
+      }
+      return player
+    })
+
+    const updatedSession = {
+      ...session,
+      playersInGame: updatedPlayersInGame,
+      // Don't subtract points from table yet - they stay until game ends
+    }
+
+    onUpdateSession(updatedSession)
+    setCashOutAmount("")
+    setShowCashOutModal(false)
+    setSelectedPlayer(null)
+  }
+
+  const handleConfirmCloseGameAction = () => {
+    const updatedSession = {
+      ...session,
+      status: "pending_close" as const,
+    }
+    onUpdateSession(updatedSession)
+    setShowCloseGameModal(false)
+  }
+
+  const handleFinalPointInputChange = (playerId: string, value: string) => {
+    setFinalPointInputs((prev) => ({
+      ...prev,
+      [playerId]: value,
+    }))
+  }
+
+  const handleExecuteFinalizeGame = () => {
+    // Validate all inputs
+    const activePlayers = session.playersInGame.filter((p) => p.status === "active")
+    for (const player of activePlayers) {
+      const inputValue = finalPointInputs[player.playerId]
+      const points = Number.parseFloat(inputValue)
+      if (isNaN(points) || points < 0) {
+        alert(`Please enter a valid point count for ${player.name}`)
+        return
+      }
+    }
+
+    // Update all active players with their final point counts
+    const updatedPlayersInGame = session.playersInGame.map((player) => {
+      if (player.status === "active") {
+        const finalPoints = Number.parseFloat(finalPointInputs[player.playerId])
+        const cashOutAmount = finalPoints * session.pointToCashRate
+        return {
+          ...player,
+          pointStack: finalPoints,
+          cashOutAmount: cashOutAmount,
+          status: "completed" as const,
+        }
+      }
+      return player
+    })
+
+    const finalizedSession = {
+      ...session,
+      playersInGame: updatedPlayersInGame,
+      status: "completed" as const,
+      endTime: new Date().toISOString(),
+      currentPhysicalPointsOnTable: 0,
+    }
+
+    onEndGame(finalizedSession)
+    setShowFinalizeGameModal(false)
+  }
+
+  const getPlayerTotalBuyIn = (player: PlayerInGame) => {
+    return player.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
+  }
+
+  const getPlayerCurrentValue = (player: PlayerInGame) => {
+    if (player.status === "cashed_out_early") {
+      return player.cashOutAmount
+    }
+    return player.pointStack * session.pointToCashRate
+  }
+
+  const getPlayerProfitLoss = (player: PlayerInGame) => {
+    const totalBuyIn = getPlayerTotalBuyIn(player)
+    const currentValue = getPlayerCurrentValue(player)
+    return currentValue - totalBuyIn
+  }
+
+  const canCloseGame = () => {
+    const activePlayers = session.playersInGame.filter((p) => p.status === "active")
+    return activePlayers.length >= 1 && session.status === "active"
+  }
+
+  const canFinalizeGame = () => {
+    return session.status === "pending_close"
+  }
+
+  const activePlayers = session.playersInGame.filter((p) => p.status === "active")
+  const cashedOutPlayers = session.playersInGame.filter((p) => p.status === "cashed_out_early")
+
+  // Calculate payment summary for completed games
+  const paymentSummary = session.status === "completed" ? calculatePayments(session.playersInGame) : null
+
+  // Add Friend to Game states
+
+  // Debug states
+
+  // Friend request states
+
+  // Buy-in editing states
+
+  // Buy-in deletion states
 
   // Check if current user is the game owner
-  const isGameOwner = session.isOwner !== false
 
   // Enhanced game state checks
   const gameStateInfo = useMemo(() => {
@@ -312,7 +677,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const loadFriendsForInvitation = async () => {
     if (!user) return
 
-    setLoadingFriends(true)
+    setLoadingFriendsOld(true)
     try {
       // Get friendships
       const { data: friendsData, error } = await supabase
@@ -322,12 +687,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
       if (error) {
         console.error("Error loading friendships:", error)
-        setFriends([])
+        setFriendsOld([])
         return
       }
 
       if (!friendsData || friendsData.length === 0) {
-        setFriends([])
+        setFriendsOld([])
         return
       }
 
@@ -340,7 +705,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
       if (profilesError) {
         console.error("Error loading friend profiles:", profilesError)
-        setFriends([])
+        setFriendsOld([])
         return
       }
 
@@ -350,12 +715,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         friend_profile: profilesData?.find((p) => p.id === friendship.friend_id),
       }))
 
-      setFriends(friendsWithProfiles)
+      setFriendsOld(friendsWithProfiles)
     } catch (error) {
       console.error("Error loading friends:", error)
-      setFriends([])
+      setFriendsOld([])
     } finally {
-      setLoadingFriends(false)
+      setLoadingFriendsOld(false)
     }
   }
 
@@ -483,10 +848,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   // Filter friends who haven't been invited yet
   const getUninvitedFriends = () => {
     const alreadyInvited = session.invitedUsers || []
-    return friends.filter((friend) => !alreadyInvited.includes(friend.friend_id))
+    return friendsOld.filter((friend) => !alreadyInvited.includes(friend.friend_id))
   }
 
-  const handleInviteFriendsToGame = async () => {
+  // FIXED: Enhanced invitation handling with proper error handling and state updates
+  const handleInviteFriendsToGameOld = async () => {
     if (!user || selectedFriendsToInvite.length === 0) return
 
     setInviteLoading(true)
@@ -494,7 +860,13 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     setInviteSuccess("")
 
     try {
-      // Send invitations to selected friends
+      console.log("Starting friend invitation process...", {
+        gameId: session.id,
+        friendsToInvite: selectedFriendsToInvite,
+        currentInvitedUsers: session.invitedUsers,
+      })
+
+      // Step 1: Create invitation records in database
       const invitations = selectedFriendsToInvite.map((friendId) => ({
         game_session_id: session.id,
         inviter_id: user.id,
@@ -502,33 +874,63 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         status: "pending" as const,
       }))
 
-      const { error } = await supabase.from("game_invitations").insert(invitations)
+      const { data: createdInvitations, error: invitationError } = await supabase
+        .from("game_invitations")
+        .insert(invitations)
+        .select()
 
-      if (error) {
-        throw error
+      if (invitationError) {
+        console.error("Failed to create invitations:", invitationError)
+        throw new Error(`Failed to create invitations: ${invitationError.message}`)
       }
 
-      // Update the session's invited users list
+      console.log("Invitations created successfully:", createdInvitations)
+
+      // Step 2: Update the game session with new invited users
+      const currentInvitedUsers = session.invitedUsers || []
+      const updatedInvitedUsers = [...currentInvitedUsers, ...selectedFriendsToInvite]
+
+      const { error: updateError } = await supabase
+        .from("game_sessions")
+        .update({ invited_users: updatedInvitedUsers })
+        .eq("id", session.id)
+        .eq("user_id", user.id)
+
+      if (updateError) {
+        console.error("Failed to update game session:", updateError)
+        throw new Error(`Failed to update game session: ${updateError.message}`)
+      }
+
+      console.log("Game session updated with new invited users:", updatedInvitedUsers)
+
+      // Step 3: Update local session state immediately
       const updatedSession = {
         ...session,
-        invitedUsers: [...(session.invitedUsers || []), ...selectedFriendsToInvite],
+        invitedUsers: updatedInvitedUsers,
       }
 
+      // CRITICAL FIX: Call onUpdateSession to propagate changes to parent component
       onUpdateSession(updatedSession)
 
+      console.log("Local session state updated successfully")
+
+      // Step 4: Show success message
       setInviteSuccess(
-        `Sent ${selectedFriendsToInvite.length} invitation${selectedFriendsToInvite.length > 1 ? "s" : ""}!`,
+        `Successfully sent ${selectedFriendsToInvite.length} invitation${selectedFriendsToInvite.length > 1 ? "s" : ""}!`,
       )
       setSelectedFriendsToInvite([])
 
-      // Close modal after a short delay
+      // Step 5: Close modal after a short delay
       setTimeout(() => {
         setIsInviteFriendsModalOpen(false)
         setInviteSuccess("")
       }, 2000)
+
+      // Step 6: Refresh friends list to update UI
+      await loadFriendsForInvitation()
     } catch (error: any) {
-      console.error("Error sending invitations:", error)
-      setInviteError("Failed to send invitations. Please try again.")
+      console.error("Error in friend invitation process:", error)
+      setInviteError(`Failed to send invitations: ${error.message}`)
     } finally {
       setInviteLoading(false)
     }
@@ -549,7 +951,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
   // Create a player with automatic standard buy-in
   const createPlayerWithBuyIn = (name: string): PlayerInGame => {
-    const initialBuyIn: BuyInRecord = {
+    const initialBuyIn = {
       logId: generateLogId(),
       amount: session.standardBuyInAmount,
       time: new Date().toISOString(),
@@ -598,13 +1000,13 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
   const openBuyInModal = (playerId: string) => {
     setBuyInPlayerId(playerId)
-    setBuyInAmount(session.standardBuyInAmount)
+    setBuyInAmountOld(session.standardBuyInAmount)
     setIsBuyInModalOpen(true)
     setFormError("")
   }
 
-  const handleBuyIn = () => {
-    if (!buyInPlayerId || buyInAmount <= 0) {
+  const handleBuyInOld = () => {
+    if (!buyInPlayerId || buyInAmountOld <= 0) {
       setFormError("Invalid buy-in amount.")
       return
     }
@@ -617,7 +1019,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       setFormError("Cannot add buy-ins to a game that is closing or completed.")
       return
     }
-    const pointsToAdd = Math.floor(buyInAmount / session.pointToCashRate)
+    const pointsToAdd = Math.floor(buyInAmountOld / session.pointToCashRate)
 
     const updatedSession = {
       ...session,
@@ -626,7 +1028,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           ? {
               ...p,
               pointStack: p.pointStack + pointsToAdd,
-              buyIns: [...p.buyIns, { logId: generateLogId(), amount: buyInAmount, time: new Date().toISOString() }],
+              buyIns: [...p.buyIns, { logId: generateLogId(), amount: buyInAmountOld, time: new Date().toISOString() }],
             }
           : p,
       ),
@@ -751,7 +1153,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     setFormError("")
   }
 
-  const handleCashOut = () => {
+  const handleCashOutOld = () => {
     const cashOutPoints = cashOutPointAmount === "" ? 0 : Number.parseInt(cashOutPointAmount, 10)
 
     if (isNaN(cashOutPoints) || cashOutPoints < 0) {
@@ -777,6 +1179,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       pointsCashedOut: cashOutPoints,
       cashValue: cashValue,
       time: new Date().toISOString(),
+      editedAt: `Game Settlement @ ${formatTime(new Date().toISOString())}`,
     }
 
     // Points that remain on the table = player's stack minus what they cash out
@@ -826,6 +1229,72 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     setIsCloseGameConfirmModalOpen(true)
   }
 
+  const handleConfirmCloseGameActionOld = () => {
+    const updatedSession = {
+      ...session,
+      status: "pending_close" as const,
+    }
+    onUpdateSession(updatedSession)
+    setIsCloseGameConfirmModalOpen(false)
+  }
+
+  const handleFinalPointInputChangeOld = (playerId: string, value: string) => {
+    setFinalPointInputsOld((prev) =>
+      prev.map((input) => (input.playerId === playerId ? { ...input, points: value } : input)),
+    )
+  }
+
+  const handleExecuteFinalizeGameOld = () => {
+    // Validate that all points add up correctly
+    const enteredSum = finalPointInputsOld.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)
+
+    if (enteredSum !== physicalPointsForFinalize) {
+      setFinalizeFormError(
+        `Points entered (${enteredSum}) must equal physical points on table (${physicalPointsForFinalize})`,
+      )
+      return
+    }
+
+    // Create final cash-out records for all active players
+    const updatedPlayersInGame = session.playersInGame.map((player) => {
+      const finalInput = finalPointInputsOld.find((input) => input.playerId === player.playerId)
+
+      if (finalInput && player.status === "active") {
+        const finalPoints = Number.parseInt(finalInput.points, 10) || 0
+        const finalCashValue = finalPoints * session.pointToCashRate
+
+        const finalCashOutRecord: CashOutLogRecord = {
+          logId: generateLogId(),
+          pointsCashedOut: finalPoints,
+          cashValue: finalCashValue,
+          time: new Date().toISOString(),
+          editedAt: `Game Finalization @ ${formatTime(new Date().toISOString())}`,
+        }
+
+        return {
+          ...player,
+          pointStack: 0,
+          cashOutAmount: player.cashOutAmount + finalCashValue,
+          cashOutLog: [...player.cashOutLog, finalCashOutRecord],
+          status: "cashed_out_early" as const,
+        }
+      }
+
+      return player
+    })
+
+    const finalizedSession: GameSession = {
+      ...session,
+      playersInGame: updatedPlayersInGame,
+      status: "completed",
+      endTime: new Date().toISOString(),
+      currentPhysicalPointsOnTable: 0,
+    }
+
+    onEndGame(finalizedSession)
+    setIsFinalizeResultsModalOpen(false)
+  }
+
   const openFinalizeResultsModal = () => {
     // Calculate the correct physical points on table:
     // 1. Points from active players
@@ -857,83 +1326,9 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         points: p.pointStack.toString(),
       }))
 
-    setFinalPointInputs(activePlayersInputs)
+    setFinalPointInputsOld(activePlayersInputs)
     setFinalizeFormError("")
     setIsFinalizeResultsModalOpen(true)
-  }
-
-  const handleConfirmCloseGameAction = () => {
-    const newSessionState: GameSession = {
-      ...session,
-      status: "pending_close",
-    }
-    onUpdateSession(newSessionState)
-    setIsCloseGameConfirmModalOpen(false)
-  }
-
-  const handleFinalPointInputChange = (playerId: string, value: string) => {
-    setFinalPointInputs((prev) =>
-      prev.map((input) => (input.playerId === playerId ? { ...input, points: value } : input)),
-    )
-  }
-
-  const handleExecuteFinalizeGame = () => {
-    let sumOfEnteredFinalPoints = 0
-    const parsedInputs: Array<{ playerId: string; points: number }> = []
-
-    for (const input of finalPointInputs) {
-      const pointsNum = Number.parseInt(input.points, 10)
-      if (isNaN(pointsNum) || pointsNum < 0) {
-        setFinalizeFormError(`Invalid point amount for ${input.name}. Must be a non-negative number.`)
-        return
-      }
-      parsedInputs.push({ playerId: input.playerId, points: pointsNum })
-      sumOfEnteredFinalPoints += pointsNum
-    }
-
-    // Allow finalization if no active players remain OR if points match exactly
-    if (finalPointInputs.length > 0 && sumOfEnteredFinalPoints !== physicalPointsForFinalize) {
-      setFinalizeFormError(
-        `Sum of final points entered (${sumOfEnteredFinalPoints}) does not match total physical points on table (${physicalPointsForFinalize}). Please ensure all points are accounted for.`,
-      )
-      return
-    }
-
-    setFinalizeFormError("")
-
-    const finalizedSession: GameSession = {
-      ...session,
-      playersInGame: session.playersInGame.map((p) => {
-        if (p.status === "cashed_out_early") {
-          return p
-        }
-        const finalInput = parsedInputs.find((fi) => fi.playerId === p.playerId)
-        const finalPointsForPlayer = finalInput ? finalInput.points : 0
-        const valueOfFinalPoints = finalPointsForPlayer * session.pointToCashRate
-
-        const finalCashOutLogEntry: CashOutLogRecord = {
-          logId: generateLogId(),
-          pointsCashedOut: finalPointsForPlayer,
-          cashValue: valueOfFinalPoints,
-          time: new Date().toISOString(),
-          editedAt: `Game Settlement @ ${formatTime(new Date().toISOString())}`,
-        }
-
-        return {
-          ...p,
-          cashOutAmount: p.cashOutAmount + valueOfFinalPoints,
-          pointStack: 0,
-          cashOutLog: [...p.cashOutLog, finalCashOutLogEntry],
-          status: "cashed_out_early",
-        }
-      }),
-      status: "completed",
-      endTime: new Date().toISOString(),
-      currentPhysicalPointsOnTable: 0,
-    }
-
-    onEndGame(finalizedSession)
-    setIsFinalizeResultsModalOpen(false)
   }
 
   const getStatusTextAndColor = () => {
@@ -1045,6 +1440,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                         Can Invite: {gameStateInfo.canInviteFriends ? "✓" : "✗"} | Can Add:{" "}
                         {gameStateInfo.canAddPlayers ? "✓" : "✗"}
                       </p>
+                      <button
+                        onClick={() => setShowDebugger(true)}
+                        className="mt-1 px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded"
+                      >
+                        Debug Invitations
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1076,6 +1477,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             <p className="text-text-primary">
               Points in Play: <span className="font-semibold text-white">{session.currentPhysicalPointsOnTable}</span>
             </p>
+            {/* Show invited users count if any */}
+            {session.invitedUsers && session.invitedUsers.length > 0 && (
+              <p className="text-text-primary">
+                Invited Users: <span className="font-semibold text-blue-400">{session.invitedUsers.length}</span>
+              </p>
+            )}
           </div>
         </div>
       </Card>
@@ -1193,9 +1600,183 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         ))}
       </div>
 
+      {/* Debug Modal */}
+      {showDebugger && <FriendInvitationDebugger gameSessionId={session.id} onClose={() => setShowDebugger(false)} />}
+
       {/* Only show modals if user is the game owner */}
       {isGameOwner && (
         <>
+          {/* Buy-in Modal */}
+          <Modal
+            isOpen={isBuyInModalOpen}
+            onClose={() => {
+              setIsBuyInModalOpen(false)
+              setBuyInPlayerId(null)
+              setFormError("")
+            }}
+            title="Add Buy-in"
+          >
+            <div className="space-y-4">
+              <Input
+                label="Buy-in Amount ($)"
+                id="buyInAmount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={buyInAmountOld}
+                onChange={(e) => setBuyInAmountOld(Number.parseFloat(e.target.value))}
+                placeholder="25.00"
+              />
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsBuyInModalOpen(false)
+                    setBuyInPlayerId(null)
+                    setFormError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleBuyInOld} variant="primary">
+                  Add Buy-in
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Cash Out Modal */}
+          <Modal
+            isOpen={isCashOutModalOpen}
+            onClose={() => {
+              setIsCashOutModalOpen(false)
+              setCashOutPlayerId(null)
+              setCashOutPointAmount("")
+              setFormError("")
+            }}
+            title="Cash Out Player"
+          >
+            <div className="space-y-4">
+              <Input
+                label="Points to Cash Out"
+                id="cashOutPointAmount"
+                type="number"
+                min="0"
+                value={cashOutPointAmount}
+                onChange={(e) => setCashOutPointAmount(e.target.value)}
+                placeholder="Enter points to cash out (leave empty for 0)"
+              />
+              <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
+                <p className="text-blue-200 text-sm">
+                  <strong>Cash Value:</strong>{" "}
+                  {formatCurrency(
+                    (cashOutPointAmount === "" ? 0 : Number.parseInt(cashOutPointAmount, 10) || 0) *
+                      session.pointToCashRate,
+                  )}
+                </p>
+                <p className="text-blue-200 text-sm mt-1">
+                  <strong>Available Points on Table:</strong> {session.currentPhysicalPointsOnTable}
+                </p>
+              </div>
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsCashOutModalOpen(false)
+                    setCashOutPlayerId(null)
+                    setCashOutPointAmount("")
+                    setFormError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleCashOutOld} variant="primary">
+                  Cash Out
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Edit Buy-in Modal */}
+          <Modal
+            isOpen={isEditBuyInModalOpen}
+            onClose={() => {
+              setIsEditBuyInModalOpen(false)
+              setEditingBuyIn(null)
+              setFormError("")
+            }}
+            title="Edit Buy-in"
+          >
+            <div className="space-y-4">
+              <Input
+                label="Buy-in Amount ($)"
+                id="editBuyInAmount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={editBuyInAmount}
+                onChange={(e) => setEditBuyInAmount(Number.parseFloat(e.target.value))}
+              />
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsEditBuyInModalOpen(false)
+                    setEditingBuyIn(null)
+                    setFormError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleEditBuyIn} variant="primary">
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
+          {/* Delete Buy-in Modal */}
+          <Modal
+            isOpen={isDeleteBuyInModalOpen}
+            onClose={() => {
+              setIsDeleteBuyInModalOpen(false)
+              setDeletingBuyIn(null)
+              setFormError("")
+            }}
+            title="Delete Buy-in"
+          >
+            <div className="space-y-4">
+              <p className="text-text-secondary">
+                Are you sure you want to delete this buy-in of{" "}
+                <strong>{deletingBuyIn ? formatCurrency(deletingBuyIn.amount) : ""}</strong>? This action cannot be
+                undone.
+              </p>
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="flex justify-end space-x-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsDeleteBuyInModalOpen(false)
+                    setDeletingBuyIn(null)
+                    setFormError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleDeleteBuyIn} variant="danger">
+                  Delete Buy-in
+                </Button>
+              </div>
+            </div>
+          </Modal>
+
           {/* Close Game Confirmation Modal */}
           <Modal
             isOpen={isCloseGameConfirmModalOpen}
@@ -1211,7 +1792,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                 <Button type="button" variant="ghost" onClick={() => setIsCloseGameConfirmModalOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleConfirmCloseGameAction} variant="danger">
+                <Button onClick={handleConfirmCloseGameActionOld} variant="danger">
                   Confirm Close Game
                 </Button>
               </div>
@@ -1251,8 +1832,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   </div>
                 </div>
 
-                {finalPointInputs.length > 0 ? (
-                  finalPointInputs.map((input) => (
+                {finalPointInputsOld.length > 0 ? (
+                  finalPointInputsOld.map((input) => (
                     <div key={input.playerId} className="flex items-center justify-between">
                       <label htmlFor={`final-points-${input.playerId}`} className="text-white mr-2">
                         <span className="text-white">{input.name}</span> (Active):
@@ -1261,7 +1842,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                         id={`final-points-${input.playerId}`}
                         type="number"
                         value={input.points}
-                        onChange={(e) => handleFinalPointInputChange(input.playerId, e.target.value)}
+                        onChange={(e) => handleFinalPointInputChangeOld(input.playerId, e.target.value)}
                         placeholder="Final Points"
                         className="w-32"
                         min="0"
@@ -1280,7 +1861,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                     <span className="text-white text-sm">
                       Points Entered:{" "}
                       <span className="text-white">
-                        {finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)}
+                        {finalPointInputsOld.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)}
                       </span>
                     </span>
                     <span className="text-white text-sm">
@@ -1289,7 +1870,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   </div>
                   <div className="mt-2 text-center">
                     {(() => {
-                      const enteredSum = finalPointInputs.reduce(
+                      const enteredSum = finalPointInputsOld.reduce(
                         (sum, item) => sum + (Number.parseInt(item.points, 10) || 0),
                         0,
                       )
@@ -1313,12 +1894,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleExecuteFinalizeGame}
+                  onClick={handleExecuteFinalizeGameOld}
                   variant="primary"
                   disabled={
-                    (finalPointInputs.length === 0 && physicalPointsForFinalize !== 0) ||
-                    (finalPointInputs.length > 0 &&
-                      finalPointInputs.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0) !==
+                    (finalPointInputsOld.length === 0 && physicalPointsForFinalize !== 0) ||
+                    (finalPointInputsOld.length > 0 &&
+                      finalPointInputsOld.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0) !==
                         physicalPointsForFinalize)
                   }
                 >
@@ -1401,12 +1982,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                 the game.
               </p>
 
-              {loadingFriends ? (
+              {loadingFriendsOld ? (
                 <p className="text-sm text-text-secondary">Loading friends...</p>
               ) : getUninvitedFriends().length === 0 ? (
                 <div className="text-center py-4">
                   <p className="text-sm text-text-secondary mb-2">
-                    {friends.length === 0
+                    {friendsOld.length === 0
                       ? "No friends available to invite. Add friends first!"
                       : "All your friends have already been invited to this game."}
                   </p>
@@ -1466,212 +2047,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleInviteFriendsToGame}
+                  onClick={handleInviteFriendsToGameOld}
                   variant="primary"
                   disabled={inviteLoading || selectedFriendsToInvite.length === 0}
                 >
                   {inviteLoading ? "Sending..." : `Send Invitation${selectedFriendsToInvite.length > 1 ? "s" : ""}`}
-                </Button>
-              </div>
-            </div>
-          </Modal>
-
-          {/* Buy-in Modal */}
-          <Modal
-            isOpen={isBuyInModalOpen}
-            onClose={() => setIsBuyInModalOpen(false)}
-            title={`Buy-in for ${session.playersInGame.find((p) => p.playerId === buyInPlayerId)?.name || ""}`}
-          >
-            <div className="space-y-4">
-              <Input
-                label="Buy-in Amount (Cash)"
-                id="buyInAmount"
-                type="number"
-                value={buyInAmount}
-                onChange={(e) => setBuyInAmount(Number.parseFloat(e.target.value))}
-                min="0.01"
-                step="0.01"
-                disabled={session.status === "pending_close"}
-              />
-              <p className="text-sm text-text-secondary">
-                Player will receive{" "}
-                <span className="text-white">
-                  {buyInAmount > 0 && session.pointToCashRate > 0
-                    ? Math.floor(buyInAmount / session.pointToCashRate)
-                    : 0}
-                </span>{" "}
-                points.
-              </p>
-              {formError && <p className="text-sm text-red-500">{formError}</p>}
-              <div className="flex justify-end space-x-2">
-                <Button type="button" variant="ghost" onClick={() => setIsBuyInModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleBuyIn}
-                  variant="primary"
-                  disabled={buyInAmount <= 0 || session.status === "pending_close"}
-                >
-                  Confirm Buy-in
-                </Button>
-              </div>
-            </div>
-          </Modal>
-
-          {/* Edit Buy-in Modal */}
-          <Modal
-            isOpen={isEditBuyInModalOpen}
-            onClose={() => {
-              setIsEditBuyInModalOpen(false)
-              setEditingBuyIn(null)
-              setFormError("")
-            }}
-            title="Edit Buy-in"
-          >
-            <div className="space-y-4">
-              <Input
-                label="Buy-in Amount (Cash)"
-                id="editBuyInAmount"
-                type="number"
-                value={editBuyInAmount}
-                onChange={(e) => setEditBuyInAmount(Number.parseFloat(e.target.value))}
-                min="0.01"
-                step="0.01"
-              />
-              <p className="text-sm text-text-secondary">
-                Player will have{" "}
-                <span className="text-white">
-                  {editBuyInAmount > 0 && session.pointToCashRate > 0
-                    ? Math.floor(editBuyInAmount / session.pointToCashRate)
-                    : 0}
-                </span>{" "}
-                points from this buy-in.
-              </p>
-              {formError && <p className="text-sm text-red-500">{formError}</p>}
-              <div className="flex justify-end space-x-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => {
-                    setIsEditBuyInModalOpen(false)
-                    setEditingBuyIn(null)
-                    setFormError("")
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={handleEditBuyIn} variant="primary" disabled={editBuyInAmount <= 0}>
-                  Save Changes
-                </Button>
-              </div>
-            </div>
-          </Modal>
-
-          {/* Delete Buy-in Modal */}
-          <Modal
-            isOpen={isDeleteBuyInModalOpen}
-            onClose={() => {
-              setIsDeleteBuyInModalOpen(false)
-              setDeletingBuyIn(null)
-              setFormError("")
-            }}
-            title="Delete Buy-in"
-          >
-            <div className="space-y-4">
-              <p className="text-text-secondary">
-                Are you sure you want to delete this buy-in of{" "}
-                <span className="text-white font-semibold">{formatCurrency(deletingBuyIn?.amount || 0)}</span>?
-              </p>
-              <p className="text-sm text-yellow-300">
-                This will remove{" "}
-                <span className="text-white font-semibold">
-                  {deletingBuyIn ? Math.floor(deletingBuyIn.amount / session.pointToCashRate) : 0} points
-                </span>{" "}
-                from the player's stack and cannot be undone.
-              </p>
-              {formError && <p className="text-sm text-red-500">{formError}</p>}
-              <div className="flex justify-end space-x-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => {
-                    setIsDeleteBuyInModalOpen(false)
-                    setDeletingBuyIn(null)
-                    setFormError("")
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={handleDeleteBuyIn} variant="danger">
-                  Delete Buy-in
-                </Button>
-              </div>
-            </div>
-          </Modal>
-
-          {/* Cash Out Modal */}
-          <Modal
-            isOpen={isCashOutModalOpen}
-            onClose={() => {
-              setIsCashOutModalOpen(false)
-              setCashOutPointAmount("")
-            }}
-            title={`Cash out & Leave for ${session.playersInGame.find((p) => p.playerId === cashOutPlayerId)?.name || ""}`}
-          >
-            <div className="space-y-4">
-              <Input
-                label="Point Amount to Cash Out from Table"
-                id="cashOutPointAmount"
-                type="number"
-                value={cashOutPointAmount}
-                onChange={(e) => setCashOutPointAmount(e.target.value)}
-                min="0"
-                step="1"
-                max={session.currentPhysicalPointsOnTable}
-                placeholder="Enter points to cash out"
-              />
-              <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
-                <p className="text-blue-200 text-sm">
-                  <strong>Cash Out Rules:</strong> Players can cash out any amount from 0 to{" "}
-                  <span className="text-white font-semibold">{session.currentPhysicalPointsOnTable} points</span> (total
-                  points on table). This allows players to cash out more than their own stack if they won chips from
-                  other players. Enter 0 if the player is leaving with no money.
-                </p>
-              </div>
-              <p className="text-sm text-text-secondary">
-                This player will receive:{" "}
-                <span className="text-white font-semibold">
-                  {formatCurrency((Number.parseInt(cashOutPointAmount) || 0) * session.pointToCashRate)}
-                </span>{" "}
-                and will be marked as 'Cashed Out Early'.
-                {cashOutPointAmount === "0" && (
-                  <span className="block text-yellow-300 mt-1">
-                    <strong>Note:</strong> Player is leaving with $0.00 (busted out).
-                  </span>
-                )}
-              </p>
-              {formError && <p className="text-sm text-red-500">{formError}</p>}
-              <div className="flex justify-end space-x-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => {
-                    setIsCashOutModalOpen(false)
-                    setCashOutPointAmount("")
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleCashOut}
-                  variant="primary"
-                  disabled={
-                    cashOutPointAmount === "" ||
-                    Number.parseInt(cashOutPointAmount) < 0 ||
-                    Number.parseInt(cashOutPointAmount) > session.currentPhysicalPointsOnTable
-                  }
-                >
-                  Confirm Cash Out & Player Leaves
                 </Button>
               </div>
             </div>
@@ -1681,5 +2061,3 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     </div>
   )
 }
-
-export default ActiveGameScreen
