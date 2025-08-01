@@ -21,6 +21,7 @@ import FriendInvitationDebugger from "./debug/FriendInvitationDebugger"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
 import { calculatePayments } from "../utils/paymentCalculator"
+import { resolveGameParticipants, type ParticipantInfo } from "../utils/participantUtils"
 
 interface ActiveGameScreenProps {
   session: GameSession
@@ -46,6 +47,7 @@ interface PlayerGameCardProps {
   onSendFriendRequest?: () => void
   isLoadingFriendRequest?: boolean
   hasUserProfile?: boolean
+  participantInfo?: ParticipantInfo
 }
 
 const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
@@ -63,6 +65,7 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
   onSendFriendRequest,
   isLoadingFriendRequest,
   hasUserProfile,
+  participantInfo,
 }) => {
   const totalBuyInCash = playerInGame.buyIns.reduce((sum, b) => sum + b.amount, 0)
   const netProfitOrLoss =
@@ -75,7 +78,14 @@ const PlayerGameCard: React.FC<PlayerGameCardProps> = ({
       <div className="space-y-3">
         <div>
           <div className="flex items-center justify-between">
-            <h5 className="text-lg sm:text-xl font-semibold text-brand-primary truncate">{playerInGame.name}</h5>
+            <div className="flex items-center space-x-2">
+              <h5 className="text-lg sm:text-xl font-semibold text-brand-primary truncate">{playerInGame.name}</h5>
+              {participantInfo?.isRegisteredUser && (
+                <span className="text-xs bg-green-600 text-white px-2 py-1 rounded" title="Registered User">
+                  ✓
+                </span>
+              )}
+            </div>
             {/* Friend request button - only show for other players who aren't friends AND have user profiles */}
             {currentUserId &&
               playerInGame.name !== currentUserId &&
@@ -293,6 +303,8 @@ export default function ActiveGameScreen({
   const [finalizeFormError, setFinalizeFormError] = useState("")
   const isGameOwner = session.isOwner !== false
   const [showConfirmCloseModal, setShowConfirmCloseModal] = useState(false)
+  const [participantInfo, setParticipantInfo] = useState<ParticipantInfo[]>([])
+  const [loadingParticipants, setLoadingParticipants] = useState(false)
 
   // Initialize final point inputs when entering pending_close state
   useEffect(() => {
@@ -313,6 +325,13 @@ export default function ActiveGameScreen({
       loadFriends()
     }
   }, [showInviteFriendsModal])
+
+  // Load participant information when players change
+  useEffect(() => {
+    if (session.playersInGame.length > 0) {
+      loadParticipantInfo()
+    }
+  }, [session.playersInGame])
 
   const loadFriends = async () => {
     if (!user) return
@@ -352,6 +371,21 @@ export default function ActiveGameScreen({
       console.error("Error loading friends:", error)
     } finally {
       setLoadingFriends(false)
+    }
+  }
+
+  const loadParticipantInfo = async () => {
+    if (!session.playersInGame.length) return
+
+    setLoadingParticipants(true)
+    try {
+      const participants = await resolveGameParticipants(session)
+      setParticipantInfo(participants)
+      console.log("✅ Loaded participant info:", participants)
+    } catch (error) {
+      console.error("Error loading participant info:", error)
+    } finally {
+      setLoadingParticipants(false)
     }
   }
 
@@ -1579,25 +1613,29 @@ export default function ActiveGameScreen({
         )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-        {session.playersInGame.map((p) => (
-          <PlayerGameCard
-            key={p.playerId}
-            playerInGame={p}
-            pointRate={session.pointToCashRate}
-            onBuyIn={() => openBuyInModal(p.playerId)}
-            onCashOut={() => openCashOutModal(p.playerId)}
-            onEditBuyIn={(buyInLogId) => openEditBuyInModal(p.playerId, buyInLogId)}
-            onDeleteBuyIn={(buyInLogId) => openDeleteBuyInModal(p.playerId, buyInLogId)}
-            gameStatus={session.status}
-            currentPhysicalPointsOnTable={session.currentPhysicalPointsOnTable}
-            isGameOwner={isGameOwner}
-            currentUserId={user?.id}
-            friendRequestState={friendRequestStates[p.name]}
-            onSendFriendRequest={() => handleSendFriendRequest(p.name)}
-            isLoadingFriendRequest={loadingFriendRequests[p.name]}
-            hasUserProfile={playersWithProfiles.has(p.name)}
-          />
-        ))}
+        {session.playersInGame.map((p) => {
+          const participant = participantInfo.find((info) => info.playerId === p.playerId)
+          return (
+            <PlayerGameCard
+              key={p.playerId}
+              playerInGame={p}
+              pointRate={session.pointToCashRate}
+              onBuyIn={() => openBuyInModal(p.playerId)}
+              onCashOut={() => openCashOutModal(p.playerId)}
+              onEditBuyIn={(buyInLogId) => openEditBuyInModal(p.playerId, buyInLogId)}
+              onDeleteBuyIn={(buyInLogId) => openDeleteBuyInModal(p.playerId, buyInLogId)}
+              gameStatus={session.status}
+              currentPhysicalPointsOnTable={session.currentPhysicalPointsOnTable}
+              isGameOwner={isGameOwner}
+              currentUserId={user?.id}
+              friendRequestState={friendRequestStates[p.name]}
+              onSendFriendRequest={() => handleSendFriendRequest(p.name)}
+              isLoadingFriendRequest={loadingFriendRequests[p.name]}
+              hasUserProfile={participant?.isRegisteredUser || false}
+              participantInfo={participant}
+            />
+          )
+        })}
       </div>
 
       {/* Debug Modal */}

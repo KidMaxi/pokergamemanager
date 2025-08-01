@@ -24,6 +24,8 @@ import AuthModal from "../components/auth/AuthModal"
 import EmailVerificationScreen from "../components/auth/EmailVerificationScreen"
 import GameStateDebugPanel from "../components/debug/GameStateDebugPanel"
 import FriendsFeatureTestResults from "../components/debug/FriendsFeatureTestResults"
+import InvitationDiagnostics from "../components/debug/InvitationDiagnostics"
+import GameInviteSystemAnalysis from "../components/analysis/GameInviteSystemAnalysis"
 
 export default function Home() {
   const { user, loading: authLoading, emailVerified } = useAuth()
@@ -36,6 +38,8 @@ export default function Home() {
   const [profile, setProfile] = useState<any | null>(null)
   const [showDebugPanel, setShowDebugPanel] = useState(false)
   const [showFriendsTest, setShowFriendsTest] = useState(false)
+  const [showInvitationDiagnostics, setShowInvitationDiagnostics] = useState(false)
+  const [showSystemAnalysis, setShowSystemAnalysis] = useState(false)
 
   usePWA()
 
@@ -705,6 +709,16 @@ export default function Home() {
       return <FriendsFeatureTestResults />
     }
 
+    // Show invitation diagnostics if enabled
+    if (showInvitationDiagnostics) {
+      return <InvitationDiagnostics />
+    }
+
+    // Show system analysis if enabled
+    if (showSystemAnalysis) {
+      return <GameInviteSystemAnalysis />
+    }
+
     // Show main application views
     switch (currentView) {
       case "friends":
@@ -783,6 +797,18 @@ export default function Home() {
                 className="text-blue-400 hover:text-blue-300 text-xs underline"
               >
                 {showFriendsTest ? "Hide" : "Show"} Friends Feature Tests
+              </button>
+              <button
+                onClick={() => setShowInvitationDiagnostics(!showInvitationDiagnostics)}
+                className="text-purple-400 hover:text-purple-300 text-xs underline"
+              >
+                {showInvitationDiagnostics ? "Hide" : "Show"} Invitation Diagnostics
+              </button>
+              <button
+                onClick={() => setShowSystemAnalysis(!showSystemAnalysis)}
+                className="text-green-400 hover:text-green-300 text-xs underline"
+              >
+                {showSystemAnalysis ? "Hide" : "Show"} System Analysis
               </button>
             </div>
           )}
