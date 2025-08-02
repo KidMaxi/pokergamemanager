@@ -11,15 +11,18 @@ export interface GameSessionStats {
 export interface UserStatistics {
   user_id: string
   total_games_played: number
-  total_buy_ins: number
-  total_cash_outs: number
+  total_wins: number
+  total_losses: number
+  total_break_even: number
   net_profit_loss: number
   biggest_win: number
   biggest_loss: number
+  total_buy_ins: number
+  total_cash_outs: number
+  total_session_time_hours: number
+  average_session_length_minutes: number
   win_rate: number
   roi: number
-  average_session_length_minutes: number
-  total_session_time_hours: number
   profit_per_hour: number
   created_at: string
   updated_at: string
@@ -74,7 +77,7 @@ export function calculateGameSessionStats(
 
 /**
  * Update user statistics after a game is completed
- * Foolproof function that handles all edge cases
+ * Uses the EXACT function signature that matches the database function
  */
 export async function updateUserStatisticsAfterGame(
   userId: string,
@@ -104,7 +107,7 @@ export async function updateUserStatisticsAfterGame(
       return { success: false, error: "Session length cannot be negative" }
     }
 
-    // Call the database function with the correct parameter order
+    // Call the database function with the EXACT parameter names and types
     console.log("🔄 Calling database function with parameters:", {
       p_user_id: userId,
       p_total_buy_in: gameStats.totalBuyIn,
@@ -126,7 +129,7 @@ export async function updateUserStatisticsAfterGame(
 
     if (data === false) {
       console.error("Database function returned false")
-      return { success: false, error: "Database function returned false - check server logs" }
+      return { success: false, error: "Database function returned false - check server logs for details" }
     }
 
     console.log("✅ User statistics updated successfully, function returned:", data)
@@ -227,15 +230,18 @@ export async function ensureUserStatisticsExist(userId: string): Promise<boolean
       const { error: insertError } = await supabase.from("user_statistics").insert({
         user_id: userId,
         total_games_played: 0,
-        total_buy_ins: 0,
-        total_cash_outs: 0,
+        total_wins: 0,
+        total_losses: 0,
+        total_break_even: 0,
         net_profit_loss: 0,
         biggest_win: 0,
         biggest_loss: 0,
+        total_buy_ins: 0,
+        total_cash_outs: 0,
+        total_session_time_hours: 0,
+        average_session_length_minutes: 0,
         win_rate: 0,
         roi: 0,
-        average_session_length_minutes: 0,
-        total_session_time_hours: 0,
       })
 
       if (insertError) {
@@ -276,6 +282,9 @@ export async function debugUserStatistics(userId: string): Promise<void> {
 
     console.log("📊 Current user statistics:", {
       totalGames: stats.total_games_played,
+      totalWins: stats.total_wins,
+      totalLosses: stats.total_losses,
+      totalBreakEven: stats.total_break_even,
       totalBuyIns: stats.total_buy_ins,
       totalCashOuts: stats.total_cash_outs,
       netProfitLoss: stats.net_profit_loss,
