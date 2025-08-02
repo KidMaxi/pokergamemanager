@@ -1,175 +1,250 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { supabase } from "../../lib/supabase"
 import { useAuth } from "../../contexts/AuthContext"
-import Modal from "../common/Modal"
-import Input from "../common/Input"
 import Button from "../common/Button"
+import Input from "../common/Input"
+import Modal from "../common/Modal"
 
-interface UserProfileProps {
-  isOpen: boolean
-  onClose: () => void
+interface UserStats {
+  all_time_profit_loss: number
+  games_played: number
+  last_game_date: string | null
 }
 
-export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
-  const { user, profile, updateProfile, signOut } = useAuth()
-  const [fullName, setFullName] = useState(profile?.full_name || "")
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
+const UserProfile: React.FC = () => {
+  const { user } = useAuth()
+  const [profile, setProfile] = useState<any>(null)
+  const [stats, setStats] = useState<UserStats | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editForm, setEditForm] = useState({
+    full_name: "",
+    email: "",
+  })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
-  const handleUpdateProfile = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError("")
-    setSuccess("")
+  useEffect(() => {
+    if (user) {
+      fetchProfile()
+      fetchStats()
+    }
+  }, [user])
 
+  const fetchProfile = async () => {
     try {
-      const { error } = await updateProfile({
-        full_name: fullName.trim(),
-      })
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", user?.id).single()
 
-      if (error) {
-        setError(error.message)
-      } else {
-        setSuccess("Profile updated successfully!")
-      }
-    } catch (err) {
-      setError("An unexpected error occurred")
+      if (error) throw error
+
+      setProfile(data)
+      setEditForm({
+        full_name: data.full_name || "",
+        email: data.email || "",
+      })
+    } catch (error) {
+      console.error("Error fetching profile:", error)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSignOut = async () => {
+  const fetchStats = async () => {
     try {
-      await signOut()
-      onClose()
-    } catch (err) {
-      setError("Error signing out")
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("all_time_profit_loss, games_played, last_game_date")
+        .eq("id", user?.id)
+        .single()
+
+      if (error) throw error
+      setStats(data)
+    } catch (error) {
+      console.error("Error fetching stats:", error)
     }
   }
 
-  // Safe getters with fallback to 0
-  const gamesPlayed = profile?.games_played || 0
-  const allTimePL = profile?.all_time_profit_loss || 0
-  const biggestWin = profile?.biggest_win || 0
-  const biggestLoss = profile?.biggest_loss || 0
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          full_name: editForm.full_name,
+          email: editForm.email,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user?.id)
+
+      if (error) throw error
+
+      await fetchProfile()
+      setIsEditing(false)
+    } catch (error) {
+      console.error("Error updating profile:", error)
+      alert("Error updating profile. Please try again.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(amount)
+  }
+
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return "Never"
+    return new Date(dateString).toLocaleDateString()
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading profile...</div>
+      </div>
+    )
+  }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="User Profile">
-      <div className="space-y-6">
-        {/* User Info */}
-        <div className="bg-surface-card p-4 rounded-lg">
-          <h3 className="text-lg font-semibold text-text-primary mb-2">Account Information</h3>
-          <p className="text-text-secondary">
-            <strong>Email:</strong> {user?.email}
-          </p>
-          <p className="text-text-secondary">
-            <strong>Account Created:</strong>{" "}
-            {profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "N/A"}
-          </p>
-          {profile?.is_admin && (
-            <p className="text-brand-primary font-semibold">
-              <strong>Admin Account</strong>
-            </p>
-          )}
-        </div>
-
-        {/* All-Time Poker Stats */}
-        <div className="bg-surface-card p-4 rounded-lg border-2 border-green-500">
-          <h3 className="text-lg font-semibold text-green-400 mb-4 flex items-center">
-            <span className="mr-2">🃏</span>
-            All-Time Poker Stats
-          </h3>
-
-          {gamesPlayed === 0 ? (
-            <div className="text-center py-4">
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-2xl font-bold text-text-primary">$0.00</div>
-                  <div className="text-sm text-text-secondary">Total P/L</div>
-                </div>
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-2xl font-bold text-brand-primary">0</div>
-                  <div className="text-sm text-text-secondary">Games Played</div>
-                </div>
+    <div className="min-h-screen bg-gray-900 text-white p-4">
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-gray-800 rounded-lg shadow-xl p-6">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center space-x-4">
+              {/* Profile Avatar Placeholder - removed avatar_url references */}
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-2xl font-bold">
+                {profile?.full_name
+                  ? profile.full_name.charAt(0).toUpperCase()
+                  : profile?.email?.charAt(0).toUpperCase() || "U"}
               </div>
-              <p className="text-text-secondary">No completed games yet. Start playing to track your stats!</p>
+              <div>
+                <h1 className="text-3xl font-bold">{profile?.full_name || "Unnamed Player"}</h1>
+                <p className="text-gray-400">{profile?.email}</p>
+                <p className="text-sm text-gray-500">
+                  Member since {new Date(profile?.created_at).toLocaleDateString()}
+                </p>
+              </div>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Basic Stats Row */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className={`text-2xl font-bold ${allTimePL >= 0 ? "text-green-400" : "text-red-400"}`}>
-                    ${allTimePL.toFixed(2)}
-                  </div>
-                  <div className="text-sm text-text-secondary">Total P/L</div>
-                </div>
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-2xl font-bold text-brand-primary">{gamesPlayed}</div>
-                  <div className="text-sm text-text-secondary">Games Played</div>
-                </div>
-              </div>
+            <Button onClick={() => setIsEditing(true)} className="bg-blue-600 hover:bg-blue-700">
+              Edit Profile
+            </Button>
+          </div>
 
-              {/* Win/Loss Records */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-xl font-bold text-green-400">${biggestWin.toFixed(2)}</div>
-                  <div className="text-sm text-text-secondary">Biggest Win</div>
-                </div>
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-xl font-bold text-red-400">${Math.abs(biggestLoss).toFixed(2)}</div>
-                  <div className="text-sm text-text-secondary">Biggest Loss</div>
-                </div>
-              </div>
+          {/* Stats Section */}
+          <div className="border-2 border-green-500 rounded-lg p-6 mb-8">
+            <h2 className="text-2xl font-bold mb-6 text-center">🃏 All-Time Poker Stats</h2>
 
-              {profile?.last_game_date && (
+            {stats && stats.games_played > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="text-center">
-                  <p className="text-sm text-text-secondary">
-                    Last game: {new Date(profile.last_game_date).toLocaleDateString()}
-                  </p>
+                  <div
+                    className={`text-3xl font-bold ${stats.all_time_profit_loss >= 0 ? "text-green-400" : "text-red-400"}`}
+                  >
+                    {formatCurrency(stats.all_time_profit_loss || 0)}
+                  </div>
+                  <div className="text-gray-400 mt-1">Total P/L</div>
                 </div>
-              )}
+
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-blue-400">{stats.games_played || 0}</div>
+                  <div className="text-gray-400 mt-1">Games Played</div>
+                </div>
+
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-purple-400">{formatDate(stats.last_game_date)}</div>
+                  <div className="text-gray-400 mt-1">Last Game</div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-gray-400">{formatCurrency(0)}</div>
+                    <div className="text-gray-400 mt-1">Total P/L</div>
+                  </div>
+
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-gray-400">0</div>
+                    <div className="text-gray-400 mt-1">Games Played</div>
+                  </div>
+                </div>
+                <p className="text-gray-500 text-lg">
+                  No games played yet. Join or create a game to start tracking your poker statistics!
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Account Information */}
+          <div className="bg-gray-700 rounded-lg p-6">
+            <h3 className="text-xl font-semibold mb-4">Account Information</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Full Name</label>
+                <div className="text-white bg-gray-600 p-3 rounded">{profile?.full_name || "Not set"}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Email</label>
+                <div className="text-white bg-gray-600 p-3 rounded">{profile?.email}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Account Type</label>
+                <div className="text-white bg-gray-600 p-3 rounded">
+                  {profile?.is_admin ? "Administrator" : "Player"}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Last Updated</label>
+                <div className="text-white bg-gray-600 p-3 rounded">
+                  {new Date(profile?.updated_at).toLocaleDateString()}
+                </div>
+              </div>
             </div>
-          )}
-        </div>
-
-        {/* Update Profile Form */}
-        <form onSubmit={handleUpdateProfile} className="space-y-4">
-          <Input
-            label="Full Name"
-            id="fullName"
-            type="text"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            placeholder="Enter your full name"
-          />
-
-          {error && <div className="text-red-500 text-sm bg-red-50 border border-red-200 rounded p-3">{error}</div>}
-
-          {success && (
-            <div className="text-green-500 text-sm bg-green-50 border border-green-200 rounded p-3">{success}</div>
-          )}
-
-          <Button type="submit" variant="primary" disabled={loading} className="w-full">
-            {loading ? "Updating..." : "Update Profile"}
-          </Button>
-        </form>
-
-        {/* Actions */}
-        <div className="flex justify-between pt-4 border-t border-border-default">
-          <Button onClick={onClose} variant="ghost">
-            Close
-          </Button>
-          <Button onClick={handleSignOut} variant="danger">
-            Sign Out
-          </Button>
+          </div>
         </div>
       </div>
-    </Modal>
+
+      {/* Edit Profile Modal */}
+      {isEditing && (
+        <Modal isOpen={isEditing} onClose={() => setIsEditing(false)} title="Edit Profile">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Full Name</label>
+              <Input
+                type="text"
+                value={editForm.full_name}
+                onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                placeholder="Enter your full name"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Email</label>
+              <Input
+                type="email"
+                value={editForm.email}
+                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                placeholder="Enter your email"
+              />
+            </div>
+            <div className="flex space-x-3 pt-4">
+              <Button onClick={handleSave} disabled={saving} className="bg-green-600 hover:bg-green-700 flex-1">
+                {saving ? "Saving..." : "Save Changes"}
+              </Button>
+              <Button onClick={() => setIsEditing(false)} className="bg-gray-600 hover:bg-gray-700 flex-1">
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
   )
 }
+
+export default UserProfile

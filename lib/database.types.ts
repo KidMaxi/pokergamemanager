@@ -8,46 +8,34 @@ export interface Database {
           id: string
           email: string
           full_name: string | null
-          avatar_url: string | null
           created_at: string
           updated_at: string
           is_admin: boolean
-          preferences: Json
           all_time_profit_loss: number
           games_played: number
           last_game_date: string | null
-          biggest_win: number
-          biggest_loss: number
         }
         Insert: {
           id: string
           email: string
           full_name?: string | null
-          avatar_url?: string | null
           created_at?: string
           updated_at?: string
           is_admin?: boolean
-          preferences?: Json
           all_time_profit_loss?: number
           games_played?: number
           last_game_date?: string | null
-          biggest_win?: number
-          biggest_loss?: number
         }
         Update: {
           id?: string
           email?: string
           full_name?: string | null
-          avatar_url?: string | null
           created_at?: string
           updated_at?: string
           is_admin?: boolean
-          preferences?: Json
           all_time_profit_loss?: number
           games_played?: number
           last_game_date?: string | null
-          biggest_win?: number
-          biggest_loss?: number
         }
       }
       game_sessions: {
