@@ -14,6 +14,11 @@ import type {
 import { generateId, generateLogId } from "../utils"
 import { usePWA } from "../hooks/usePWA"
 import { useGameStateSync } from "../hooks/useGameStateSync"
+import {
+  updateUserStatisticsAfterGame,
+  calculateGameSessionStats,
+  ensureUserStatisticsExist,
+} from "../utils/userStatistics"
 import Navbar from "../components/Navbar"
 import PlayerManagement from "../components/PlayerManagement"
 import GameDashboard from "../components/GameDashboard"
@@ -64,6 +69,9 @@ export default function Home() {
     try {
       setLoading(true)
       console.log("🔄 Loading user data for:", user!.id)
+
+      // Ensure user statistics exist - this is the only new addition
+      await ensureUserStatisticsExist(user!.id)
 
       // Load games created by the user
       let sessionsData
@@ -420,28 +428,36 @@ export default function Home() {
           })
 
           if (userPlayer) {
-            // Calculate user's profit/loss for this game
-            const totalBuyIn = userPlayer.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
-            const profitLoss = userPlayer.cashOutAmount - totalBuyIn
+            // Calculate game session statistics using the new system
+            const gameStats = calculateGameSessionStats(userPlayer, session.startTime, session.endTime || undefined)
 
-            console.log(`Updating stats for ${participantProfile.full_name}:`, {
+            console.log(`Updating statistics for ${participantProfile.full_name}:`, {
               userId: participantProfile.id,
-              totalBuyIn,
-              cashOut: userPlayer.cashOutAmount,
-              profitLoss,
+              gameStats,
             })
 
-            // Call the corrected database function with proper UUID parameter
-            const { data, error } = await supabase.rpc("update_user_game_stats", {
-              user_id_param: participantProfile.id, // This is already a UUID from the database
-              profit_loss_amount: profitLoss,
-            })
+            // Update user statistics using the new system
+            const result = await updateUserStatisticsAfterGame(participantProfile.id, gameStats)
 
-            if (error) {
-              console.error(`Error updating stats for user ${participantProfile.id}:`, error)
+            if (!result.success) {
+              console.error(`Error updating statistics for user ${participantProfile.id}:`, result.error)
               // Continue with other users even if one fails
             } else {
-              console.log(`✅ Successfully updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
+              console.log(`✅ Successfully updated statistics for ${participantProfile.full_name}`)
+            }
+
+            // Also update the legacy profile stats for backward compatibility
+            try {
+              const { error: legacyError } = await supabase.rpc("update_user_game_stats", {
+                user_id_param: participantProfile.id,
+                profit_loss_amount: gameStats.profitLoss,
+              })
+
+              if (legacyError) {
+                console.warn(`Legacy stats update failed for ${participantProfile.id}:`, legacyError)
+              }
+            } catch (legacyError) {
+              console.warn("Legacy stats update not available:", legacyError)
             }
           } else {
             console.log(`No matching player found for profile ${participantProfile.full_name} in game data`)
@@ -576,7 +592,7 @@ export default function Home() {
     try {
       await updateGameSessionInDatabase(completedSession)
 
-      // Update stats for all participants (host + invited users)
+      // Update stats for all participants (host + invited users) using new statistics system
       await updateUserStatsAfterGameCompletion(completedSession)
 
       setGameSessions((prevSessions) => {

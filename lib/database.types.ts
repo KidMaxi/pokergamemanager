@@ -163,6 +163,59 @@ export interface Database {
           updated_at?: string
         }
       }
+      user_statistics: {
+        Row: {
+          id: string
+          user_id: string
+          total_games_played: number
+          total_buy_ins: number
+          total_cash_outs: number
+          net_profit_loss: number
+          biggest_win: number
+          biggest_loss: number
+          average_session_length_minutes: number
+          favorite_buy_in_amount: number
+          total_session_time_minutes: number
+          win_rate: number
+          roi: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          total_games_played?: number
+          total_buy_ins?: number
+          total_cash_outs?: number
+          net_profit_loss?: number
+          biggest_win?: number
+          biggest_loss?: number
+          average_session_length_minutes?: number
+          favorite_buy_in_amount?: number
+          total_session_time_minutes?: number
+          win_rate?: number
+          roi?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          total_games_played?: number
+          total_buy_ins?: number
+          total_cash_outs?: number
+          net_profit_loss?: number
+          biggest_win?: number
+          biggest_loss?: number
+          average_session_length_minutes?: number
+          favorite_buy_in_amount?: number
+          total_session_time_minutes?: number
+          win_rate?: number
+          roi?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -186,6 +239,55 @@ export interface Database {
           friend_user_id: string
         }
         Returns: void
+      }
+      update_user_statistics_after_game: {
+        Args: {
+          p_user_id: string
+          p_total_buy_in: number
+          p_cash_out_amount: number
+          p_session_length_minutes?: number
+        }
+        Returns: void
+      }
+      get_user_statistics: {
+        Args: {
+          p_user_id: string
+        }
+        Returns: {
+          user_id: string
+          total_games_played: number
+          total_buy_ins: number
+          total_cash_outs: number
+          net_profit_loss: number
+          biggest_win: number
+          biggest_loss: number
+          average_session_length_minutes: number
+          favorite_buy_in_amount: number
+          total_session_time_minutes: number
+          win_rate: number
+          roi: number
+          profit_per_hour: number
+          created_at: string
+          updated_at: string
+        }[]
+      }
+      get_statistics_leaderboard: {
+        Args: {
+          p_metric?: string
+          p_limit?: number
+        }
+        Returns: {
+          user_id: string
+          full_name: string
+          email: string
+          metric_value: number
+          total_games_played: number
+          win_rate: number
+        }[]
+      }
+      migrate_profile_stats_to_user_statistics: {
+        Args: {}
+        Returns: number
       }
     }
     Enums: {
