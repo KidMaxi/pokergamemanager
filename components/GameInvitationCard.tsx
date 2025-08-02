@@ -14,15 +14,14 @@ interface GameInvitationCardProps {
     invitee_id: string
     status: "pending" | "accepted" | "declined"
     created_at: string
-    game_session?: {
+    game_session: {
       id: string
       name: string
       start_time: string
       status: string
       user_id: string
     }
-    inviter?: {
-      id: string
+    inviter: {
       full_name: string
       email: string
     }
@@ -60,8 +59,10 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
         onInvitationUpdate()
       }
 
-      // Also trigger a page refresh to update game state
-      window.location.reload()
+      // Also trigger a page refresh to ensure all data is updated
+      setTimeout(() => {
+        window.location.reload()
+      }, 1000)
     } catch (error) {
       console.error("Error accepting invitation:", error)
       alert("Failed to accept invitation. Please try again.")
@@ -105,6 +106,7 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
+      year: "numeric",
       month: "short",
       day: "numeric",
       hour: "2-digit",
@@ -129,10 +131,10 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
     switch (status) {
       case "active":
         return "text-green-600 bg-green-100"
-      case "completed":
+      case "pending":
         return "text-blue-600 bg-blue-100"
-      case "pending_close":
-        return "text-orange-600 bg-orange-100"
+      case "completed":
+        return "text-gray-600 bg-gray-100"
       default:
         return "text-gray-600 bg-gray-100"
     }
@@ -144,44 +146,29 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
         {/* Header */}
         <div className="flex justify-between items-start">
           <div>
-            <h3 className="font-semibold text-lg text-gray-900">
-              {invitation.game_session?.name || "Game Invitation"}
-            </h3>
-            <p className="text-sm text-gray-600">From: {invitation.inviter?.full_name || "Unknown"}</p>
+            <h3 className="font-semibold text-lg text-gray-900">{invitation.game_session.name}</h3>
+            <p className="text-sm text-gray-600">Invited by {invitation.inviter.full_name}</p>
           </div>
           <div className="flex flex-col items-end space-y-1">
             <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(invitation.status)}`}>
               {invitation.status.charAt(0).toUpperCase() + invitation.status.slice(1)}
             </span>
-            {invitation.game_session && (
-              <span
-                className={`px-2 py-1 rounded-full text-xs font-medium ${getGameStatusColor(invitation.game_session.status)}`}
-              >
-                Game: {invitation.game_session.status.replace("_", " ")}
-              </span>
-            )}
+            <span
+              className={`px-2 py-1 rounded-full text-xs font-medium ${getGameStatusColor(invitation.game_session.status)}`}
+            >
+              Game: {invitation.game_session.status}
+            </span>
           </div>
         </div>
 
         {/* Game Details */}
-        {invitation.game_session && (
-          <div className="bg-gray-50 p-3 rounded-md">
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div>
-                <span className="font-medium text-gray-700">Start Time:</span>
-                <p className="text-gray-600">{formatDate(invitation.game_session.start_time)}</p>
-              </div>
-              <div>
-                <span className="font-medium text-gray-700">Status:</span>
-                <p className="text-gray-600 capitalize">{invitation.game_session.status.replace("_", " ")}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Invitation Details */}
-        <div className="text-sm text-gray-600">
-          <p>Invited: {formatDate(invitation.created_at)}</p>
+        <div className="text-sm text-gray-600 space-y-1">
+          <p>
+            <span className="font-medium">Game Start:</span> {formatDate(invitation.game_session.start_time)}
+          </p>
+          <p>
+            <span className="font-medium">Invited:</span> {formatDate(invitation.created_at)}
+          </p>
         </div>
 
         {/* Action Buttons */}
@@ -190,14 +177,14 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
             <Button
               onClick={handleAcceptInvitation}
               disabled={isProcessing}
-              className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isProcessing ? "Accepting..." : "Accept"}
             </Button>
             <Button
               onClick={handleDeclineInvitation}
               disabled={isProcessing}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isProcessing ? "Declining..." : "Decline"}
             </Button>
@@ -207,15 +194,15 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
         {/* Status Messages */}
         {invitation.status === "accepted" && (
           <div className="bg-green-50 border border-green-200 rounded-md p-3">
-            <p className="text-green-800 text-sm font-medium">
-              ✅ You've accepted this invitation! The game should appear in your dashboard.
+            <p className="text-green-800 text-sm">
+              ✅ You've accepted this invitation. The game should appear in your dashboard.
             </p>
           </div>
         )}
 
         {invitation.status === "declined" && (
           <div className="bg-red-50 border border-red-200 rounded-md p-3">
-            <p className="text-red-800 text-sm font-medium">❌ You've declined this invitation.</p>
+            <p className="text-red-800 text-sm">❌ You've declined this invitation.</p>
           </div>
         )}
       </div>
