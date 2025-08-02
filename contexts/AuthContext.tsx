@@ -91,7 +91,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = async (email: string, password: string, fullName: string) => {
     try {
-      const { error } = await supabase.auth.signUp({
+      console.log("🔄 Starting user signup process...")
+
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -101,8 +103,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       })
 
-      return { error }
+      if (error) {
+        console.error("❌ Signup error:", error)
+        return { error }
+      }
+
+      console.log("✅ User signup successful:", data.user?.id)
+
+      // The profile should be created automatically by the database trigger
+      // But let's add a small delay and check if it was created
+      if (data.user) {
+        setTimeout(async () => {
+          try {
+            const profile = await fetchProfile(data.user!.id)
+            if (!profile) {
+              console.log("⚠️ Profile not found after signup, creating manually...")
+
+              // Manually create profile if trigger didn't work
+              const { error: profileError } = await supabase.from("profiles").insert({
+                id: data.user!.id,
+                full_name: fullName,
+                email: email,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                is_admin: false,
+                preferences: {},
+                all_time_profit_loss: 0,
+                games_played: 0,
+                last_game_date: null,
+              })
+
+              if (profileError) {
+                console.error("❌ Manual profile creation failed:", profileError)
+              } else {
+                console.log("✅ Profile created manually")
+              }
+            } else {
+              console.log("✅ Profile found after signup")
+            }
+          } catch (error) {
+            console.error("❌ Error checking/creating profile:", error)
+          }
+        }, 1000)
+      }
+
+      return { error: null }
     } catch (error) {
+      console.error("❌ Signup exception:", error)
       return { error: error as AuthError }
     }
   }

@@ -8,7 +8,7 @@ body {
 
 /* Dashboard specific background */
 .dashboard-background {
-  background-image: url("/images/poker-table-background.jpg");
+  background-image: url("/images/poker-chips-background.jpg");
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
