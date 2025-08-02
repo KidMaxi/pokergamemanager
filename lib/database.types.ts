@@ -8,40 +8,37 @@ export interface Database {
           id: string
           email: string
           full_name: string | null
-          avatar_url: string | null
           created_at: string
           updated_at: string
           is_admin: boolean
-          preferences: Json
           all_time_profit_loss: number
           games_played: number
-          last_game_date: string | null
+          total_wins: number
+          win_ratio: number
         }
         Insert: {
           id: string
           email: string
           full_name?: string | null
-          avatar_url?: string | null
           created_at?: string
           updated_at?: string
           is_admin?: boolean
-          preferences?: Json
           all_time_profit_loss?: number
           games_played?: number
-          last_game_date?: string | null
+          total_wins?: number
+          win_ratio?: number
         }
         Update: {
           id?: string
           email?: string
           full_name?: string | null
-          avatar_url?: string | null
           created_at?: string
           updated_at?: string
           is_admin?: boolean
-          preferences?: Json
           all_time_profit_loss?: number
           games_played?: number
-          last_game_date?: string | null
+          total_wins?: number
+          win_ratio?: number
         }
       }
       game_sessions: {
@@ -51,27 +48,27 @@ export interface Database {
           name: string
           start_time: string
           end_time: string | null
-          status: "active" | "completed" | "pending_close"
+          status: string
           point_to_cash_rate: number
           players_data: Json
-          game_metadata: Json
+          invited_users: string[] | null
+          game_metadata: Json | null
           created_at: string
           updated_at: string
-          invited_users: string[] | null
         }
         Insert: {
-          id?: string
+          id: string
           user_id: string
           name: string
-          start_time?: string
+          start_time: string
           end_time?: string | null
-          status?: "active" | "completed" | "pending_close"
-          point_to_cash_rate?: number
-          players_data?: Json
-          game_metadata?: Json
+          status: string
+          point_to_cash_rate: number
+          players_data: Json
+          invited_users?: string[] | null
+          game_metadata?: Json | null
           created_at?: string
           updated_at?: string
-          invited_users?: string[] | null
         }
         Update: {
           id?: string
@@ -79,13 +76,13 @@ export interface Database {
           name?: string
           start_time?: string
           end_time?: string | null
-          status?: "active" | "completed" | "pending_close"
+          status?: string
           point_to_cash_rate?: number
           players_data?: Json
-          game_metadata?: Json
+          invited_users?: string[] | null
+          game_metadata?: Json | null
           created_at?: string
           updated_at?: string
-          invited_users?: string[] | null
         }
       }
       friendships: {
@@ -113,7 +110,7 @@ export interface Database {
           id: string
           sender_id: string
           receiver_id: string
-          status: "pending" | "accepted" | "declined"
+          status: string
           created_at: string
           updated_at: string
         }
@@ -121,7 +118,7 @@ export interface Database {
           id?: string
           sender_id: string
           receiver_id: string
-          status?: "pending" | "accepted" | "declined"
+          status?: string
           created_at?: string
           updated_at?: string
         }
@@ -129,7 +126,7 @@ export interface Database {
           id?: string
           sender_id?: string
           receiver_id?: string
-          status?: "pending" | "accepted" | "declined"
+          status?: string
           created_at?: string
           updated_at?: string
         }
@@ -140,7 +137,7 @@ export interface Database {
           game_session_id: string
           inviter_id: string
           invitee_id: string
-          status: "pending" | "accepted" | "declined"
+          status: string
           created_at: string
           updated_at: string
         }
@@ -149,7 +146,7 @@ export interface Database {
           game_session_id: string
           inviter_id: string
           invitee_id: string
-          status?: "pending" | "accepted" | "declined"
+          status?: string
           created_at?: string
           updated_at?: string
         }
@@ -158,14 +155,28 @@ export interface Database {
           game_session_id?: string
           inviter_id?: string
           invitee_id?: string
-          status?: "pending" | "accepted" | "declined"
+          status?: string
           created_at?: string
           updated_at?: string
         }
       }
     }
     Views: {
-      [_ in never]: never
+      user_stats_with_winrate: {
+        Row: {
+          id: string
+          full_name: string | null
+          email: string
+          games_played: number
+          total_wins: number
+          total_losses: number
+          win_ratio: number
+          all_time_profit_loss: number
+          avg_profit_per_game: number
+          created_at: string
+          updated_at: string
+        }
+      }
     }
     Functions: {
       update_user_game_stats: {
@@ -173,7 +184,7 @@ export interface Database {
           user_id_param: string
           profit_loss_amount: number
         }
-        Returns: void
+        Returns: Json
       }
       accept_friend_request: {
         Args: {
@@ -186,6 +197,10 @@ export interface Database {
           friend_user_id: string
         }
         Returns: void
+      }
+      recalculate_all_win_ratios: {
+        Args: {}
+        Returns: Json
       }
     }
     Enums: {

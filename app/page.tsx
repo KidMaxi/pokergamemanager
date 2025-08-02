@@ -14,6 +14,7 @@ import type {
 import { generateId, generateLogId } from "../utils"
 import { usePWA } from "../hooks/usePWA"
 import { useGameStateSync } from "../hooks/useGameStateSync"
+import { debugUserWinrateStats } from "../utils/winrateUtils"
 import Navbar from "../components/Navbar"
 import PlayerManagement from "../components/PlayerManagement"
 import GameDashboard from "../components/GameDashboard"
@@ -429,9 +430,10 @@ export default function Home() {
               totalBuyIn,
               cashOut: userPlayer.cashOutAmount,
               profitLoss,
+              isWin: profitLoss > 0 ? "WIN" : "LOSS",
             })
 
-            // Call the corrected database function with proper UUID parameter
+            // Call the updated database function that now includes winrate tracking
             const { data, error } = await supabase.rpc("update_user_game_stats", {
               user_id_param: participantProfile.id, // This is already a UUID from the database
               profit_loss_amount: profitLoss,
@@ -441,7 +443,12 @@ export default function Home() {
               console.error(`Error updating stats for user ${participantProfile.id}:`, error)
               // Continue with other users even if one fails
             } else {
-              console.log(`✅ Successfully updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
+              console.log(
+                `✅ Successfully updated stats for ${participantProfile.full_name}: P/L ${profitLoss} (${profitLoss > 0 ? "WIN" : "LOSS"})`,
+              )
+
+              // Debug the updated winrate stats
+              await debugUserWinrateStats(participantProfile.id)
             }
           } else {
             console.log(`No matching player found for profile ${participantProfile.full_name} in game data`)
@@ -576,7 +583,7 @@ export default function Home() {
     try {
       await updateGameSessionInDatabase(completedSession)
 
-      // Update stats for all participants (host + invited users)
+      // Update stats for all participants (host + invited users) - now includes winrate tracking
       await updateUserStatsAfterGameCompletion(completedSession)
 
       setGameSessions((prevSessions) => {
@@ -749,7 +756,7 @@ export default function Home() {
         setActiveGameId(null)
         return (
           <GameDashboard
-            players={[]}
+            players={players}
             gameSessions={gameSessions}
             onStartNewGame={handleStartNewGame}
             onSelectGame={handleSelectGame}
@@ -760,7 +767,7 @@ export default function Home() {
       default:
         return (
           <GameDashboard
-            players={[]}
+            players={players}
             gameSessions={gameSessions}
             onStartNewGame={handleStartNewGame}
             onSelectGame={handleSelectGame}
@@ -809,6 +816,12 @@ export default function Home() {
                 className="text-green-400 hover:text-green-300 text-xs underline"
               >
                 {showSystemAnalysis ? "Hide" : "Show"} System Analysis
+              </button>
+              <button
+                onClick={() => user && debugUserWinrateStats(user.id)}
+                className="text-cyan-400 hover:text-cyan-300 text-xs underline"
+              >
+                Debug My Winrate
               </button>
             </div>
           )}
