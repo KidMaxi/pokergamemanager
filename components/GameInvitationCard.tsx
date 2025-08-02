@@ -39,7 +39,7 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
         userProfile: profile,
       })
 
-      // Use the improved database function to accept the invitation
+      // Use the restored database function to accept the invitation
       const { data: result, error: acceptError } = await supabase.rpc("accept_game_invitation", {
         invitation_id: invitation.id,
       })
@@ -49,6 +49,8 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
         throw new Error(`Failed to accept invitation: ${acceptError.message}`)
       }
 
+      console.log("✅ Function result:", result)
+
       // Check the result from the function
       if (!result?.success) {
         console.error("❌ Function returned error:", result?.error)
@@ -57,7 +59,7 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
 
       console.log("✅ Invitation accepted successfully:", result)
       setSuccess(
-        `Successfully joined "${invitation.game_session?.name}"! You've been added as a player with ${result.initial_points} points.`,
+        `Successfully joined "${invitation.game_session?.name || result.game_name}"! You've been added as a player with ${result.initial_points} points.`,
       )
 
       // Notify parent component to refresh
@@ -84,7 +86,7 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
     try {
       console.log("🚫 Declining invitation:", invitation.id)
 
-      // Update the invitation status to declined
+      // Update the invitation status to declined (original v192 approach)
       const { error: updateError } = await supabase
         .from("game_invitations")
         .update({
