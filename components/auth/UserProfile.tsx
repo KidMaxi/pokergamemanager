@@ -52,6 +52,12 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     }
   }
 
+  // Safe getters with fallback to 0
+  const gamesPlayed = profile?.games_played || 0
+  const allTimePL = profile?.all_time_profit_loss || 0
+  const biggestWin = profile?.biggest_win || 0
+  const biggestLoss = profile?.biggest_loss || 0
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="User Profile">
       <div className="space-y-6">
@@ -69,6 +75,66 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
             <p className="text-brand-primary font-semibold">
               <strong>Admin Account</strong>
             </p>
+          )}
+        </div>
+
+        {/* All-Time Poker Stats */}
+        <div className="bg-surface-card p-4 rounded-lg border-2 border-green-500">
+          <h3 className="text-lg font-semibold text-green-400 mb-4 flex items-center">
+            <span className="mr-2">🃏</span>
+            All-Time Poker Stats
+          </h3>
+
+          {gamesPlayed === 0 ? (
+            <div className="text-center py-4">
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="text-center p-3 bg-surface-secondary rounded">
+                  <div className="text-2xl font-bold text-text-primary">$0.00</div>
+                  <div className="text-sm text-text-secondary">Total P/L</div>
+                </div>
+                <div className="text-center p-3 bg-surface-secondary rounded">
+                  <div className="text-2xl font-bold text-brand-primary">0</div>
+                  <div className="text-sm text-text-secondary">Games Played</div>
+                </div>
+              </div>
+              <p className="text-text-secondary">No completed games yet. Start playing to track your stats!</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Basic Stats Row */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="text-center p-3 bg-surface-secondary rounded">
+                  <div className={`text-2xl font-bold ${allTimePL >= 0 ? "text-green-400" : "text-red-400"}`}>
+                    ${allTimePL.toFixed(2)}
+                  </div>
+                  <div className="text-sm text-text-secondary">Total P/L</div>
+                </div>
+                <div className="text-center p-3 bg-surface-secondary rounded">
+                  <div className="text-2xl font-bold text-brand-primary">{gamesPlayed}</div>
+                  <div className="text-sm text-text-secondary">Games Played</div>
+                </div>
+              </div>
+
+              {/* Win/Loss Records */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="text-center p-3 bg-surface-secondary rounded">
+                  <div className="text-xl font-bold text-green-400">${biggestWin.toFixed(2)}</div>
+                  <div className="text-sm text-text-secondary">Biggest Win</div>
+                </div>
+                <div className="text-center p-3 bg-surface-secondary rounded">
+                  <div className="text-xl font-bold text-red-400">${Math.abs(biggestLoss).toFixed(2)}</div>
+                  <div className="text-sm text-text-secondary">Biggest Loss</div>
+                </div>
+              </div>
+
+              {profile?.last_game_date && (
+                <div className="text-center">
+                  <p className="text-sm text-text-secondary">
+                    Last game: {new Date(profile.last_game_date).toLocaleDateString()}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
         </div>
 

@@ -16,6 +16,8 @@ export interface Database {
           all_time_profit_loss: number
           games_played: number
           last_game_date: string | null
+          biggest_win: number
+          biggest_loss: number
         }
         Insert: {
           id: string
@@ -29,6 +31,8 @@ export interface Database {
           all_time_profit_loss?: number
           games_played?: number
           last_game_date?: string | null
+          biggest_win?: number
+          biggest_loss?: number
         }
         Update: {
           id?: string
@@ -42,6 +46,8 @@ export interface Database {
           all_time_profit_loss?: number
           games_played?: number
           last_game_date?: string | null
+          biggest_win?: number
+          biggest_loss?: number
         }
       }
       game_sessions: {
