@@ -173,11 +173,10 @@ export interface Database {
           net_profit_loss: number
           biggest_win: number
           biggest_loss: number
-          average_session_length_minutes: number
-          favorite_buy_in_amount: number
-          total_session_time_minutes: number
           win_rate: number
           roi: number
+          average_session_length_minutes: number
+          total_session_time_hours: number
           created_at: string
           updated_at: string
         }
@@ -190,11 +189,10 @@ export interface Database {
           net_profit_loss?: number
           biggest_win?: number
           biggest_loss?: number
-          average_session_length_minutes?: number
-          favorite_buy_in_amount?: number
-          total_session_time_minutes?: number
           win_rate?: number
           roi?: number
+          average_session_length_minutes?: number
+          total_session_time_hours?: number
           created_at?: string
           updated_at?: string
         }
@@ -207,11 +205,10 @@ export interface Database {
           net_profit_loss?: number
           biggest_win?: number
           biggest_loss?: number
-          average_session_length_minutes?: number
-          favorite_buy_in_amount?: number
-          total_session_time_minutes?: number
           win_rate?: number
           roi?: number
+          average_session_length_minutes?: number
+          total_session_time_hours?: number
           created_at?: string
           updated_at?: string
         }
@@ -244,10 +241,10 @@ export interface Database {
         Args: {
           p_user_id: string
           p_total_buy_in: number
-          p_cash_out_amount: number
-          p_session_length_minutes?: number
+          p_total_cash_out: number
+          p_session_length_minutes: number
         }
-        Returns: void
+        Returns: boolean
       }
       get_user_statistics: {
         Args: {
@@ -261,11 +258,10 @@ export interface Database {
           net_profit_loss: number
           biggest_win: number
           biggest_loss: number
-          average_session_length_minutes: number
-          favorite_buy_in_amount: number
-          total_session_time_minutes: number
           win_rate: number
           roi: number
+          average_session_length_minutes: number
+          total_session_time_hours: number
           profit_per_hour: number
           created_at: string
           updated_at: string

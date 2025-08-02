@@ -45,6 +45,7 @@ export default function Home() {
   const [showFriendsTest, setShowFriendsTest] = useState(false)
   const [showInvitationDiagnostics, setShowInvitationDiagnostics] = useState(false)
   const [showSystemAnalysis, setShowSystemAnalysis] = useState(false)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
   usePWA()
 
@@ -248,7 +249,7 @@ export default function Home() {
       setGameSessions([])
       setLoading(false)
     }
-  }, [user, authLoading])
+  }, [user, authLoading, refreshTrigger]) // Add refreshTrigger to dependencies
 
   // Add this useEffect after the existing useEffect
   useEffect(() => {
@@ -269,6 +270,12 @@ export default function Home() {
 
     return () => subscription.unsubscribe()
   }, [])
+
+  // Add a function to trigger refresh
+  const triggerRefresh = () => {
+    console.log("🔄 Triggering data refresh...")
+    setRefreshTrigger((prev) => prev + 1)
+  }
 
   const fetchProfile = async () => {
     try {
@@ -825,6 +832,9 @@ export default function Home() {
                 className="text-green-400 hover:text-green-300 text-xs underline"
               >
                 {showSystemAnalysis ? "Hide" : "Show"} System Analysis
+              </button>
+              <button onClick={triggerRefresh} className="text-yellow-400 hover:text-yellow-300 text-xs underline">
+                Force Refresh Data
               </button>
             </div>
           )}

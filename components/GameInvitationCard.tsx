@@ -40,7 +40,7 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
       })
 
       // Use the improved database function to accept the invitation
-      const { data: result, error: acceptError } = await supabase.rpc("accept_game_invitation", {
+      const { data: result, error: acceptError } = await supabase.rpc("accept_game_invitation_v2", {
         invitation_id: invitation.id,
       })
 
@@ -56,14 +56,21 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
       }
 
       console.log("✅ Invitation accepted successfully:", result)
-      setSuccess(
-        `Successfully joined "${invitation.game_session?.name}"! You've been added as a player with ${result.initial_points} points.`,
-      )
 
-      // Notify parent component to refresh
+      if (result.initial_points > 0) {
+        setSuccess(
+          `Successfully joined "${invitation.game_session?.name}"! You've been added as a player with ${result.initial_points} points.`,
+        )
+      } else {
+        setSuccess(`Successfully joined "${invitation.game_session?.name}"! You were already in the game.`)
+      }
+
+      // Notify parent component to refresh immediately
+      onInvitationHandled()
+
+      // Force a complete page refresh after a short delay to ensure all components update
       setTimeout(() => {
-        onInvitationHandled()
-        // Force a page refresh to ensure all data is updated
+        console.log("🔄 Forcing page refresh to sync all game data...")
         window.location.reload()
       }, 2000)
     } catch (error: any) {

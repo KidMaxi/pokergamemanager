@@ -9,19 +9,20 @@ export interface GameSessionStats {
 }
 
 export interface UserStatistics {
-  user_id: string
-  total_games_played: number
-  total_buy_ins: number
-  total_cash_outs: number
-  net_profit_loss: number
-  biggest_win: number
-  biggest_loss: number
-  win_rate: number
+  userId: string
+  totalGamesPlayed: number
+  totalBuyIns: number
+  totalCashOuts: number
+  netProfitLoss: number
+  biggestWin: number
+  biggestLoss: number
+  winRate: number
   roi: number
-  average_session_length_minutes: number
-  total_session_time_minutes: number
-  profit_per_hour: number
-  favorite_buy_in_amount: number
+  averageSessionLengthMinutes: number
+  totalSessionTimeHours: number
+  profitPerHour: number
+  createdAt: string
+  updatedAt: string
 }
 
 /**
@@ -33,7 +34,7 @@ export function calculateGameSessionStats(
   gameEndTime?: string,
 ): GameSessionStats {
   const totalBuyIn = player.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
-  const totalCashOut = player.cashOutAmount
+  const totalCashOut = player.cashOutAmount || 0
   const profitLoss = totalCashOut - totalBuyIn
 
   // Calculate session length in minutes
@@ -41,7 +42,7 @@ export function calculateGameSessionStats(
   if (gameEndTime) {
     const startTime = new Date(gameStartTime)
     const endTime = new Date(gameEndTime)
-    sessionLengthMinutes = Math.round((endTime.getTime() - startTime.getTime()) / (1000 * 60))
+    sessionLengthMinutes = Math.max(0, Math.floor((endTime.getTime() - startTime.getTime()) / (1000 * 60)))
   }
 
   return {
@@ -62,6 +63,7 @@ export async function updateUserStatisticsAfterGame(
   try {
     console.log("📊 Updating user statistics:", { userId, gameStats })
 
+    // Call the database function with correct parameter order
     const { data, error } = await supabase.rpc("update_user_statistics_after_game", {
       p_user_id: userId,
       p_total_buy_in: gameStats.totalBuyIn,
@@ -70,20 +72,24 @@ export async function updateUserStatisticsAfterGame(
     })
 
     if (error) {
-      console.error("Error updating user statistics:", error)
+      console.error("Database function error:", error)
       return { success: false, error: error.message }
+    }
+
+    if (data === false) {
+      return { success: false, error: "Function returned false" }
     }
 
     console.log("✅ User statistics updated successfully")
     return { success: true }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error updating user statistics:", error)
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" }
+    return { success: false, error: error.message }
   }
 }
 
 /**
- * Get comprehensive user statistics
+ * Get user statistics
  */
 export async function getUserStatistics(userId: string): Promise<UserStatistics | null> {
   try {
@@ -96,7 +102,11 @@ export async function getUserStatistics(userId: string): Promise<UserStatistics 
       return null
     }
 
-    return data?.[0] || null
+    if (!data || data.length === 0) {
+      return null
+    }
+
+    return data[0] as UserStatistics
   } catch (error) {
     console.error("Error fetching user statistics:", error)
     return null
@@ -104,41 +114,60 @@ export async function getUserStatistics(userId: string): Promise<UserStatistics 
 }
 
 /**
- * Ensure user statistics record exists for a user
+ * Get statistics leaderboard
  */
-export async function ensureUserStatisticsExist(userId: string): Promise<boolean> {
+export async function getStatisticsLeaderboard(metric = "net_profit_loss", limit = 10): Promise<any[]> {
   try {
-    // Check if statistics record exists
-    const { data: existing, error: checkError } = await supabase
-      .from("user_statistics")
-      .select("id")
-      .eq("user_id", userId)
-      .single()
+    const { data, error } = await supabase.rpc("get_statistics_leaderboard", {
+      p_metric: metric,
+      p_limit: limit,
+    })
 
-    if (checkError && checkError.code !== "PGRST116") {
-      // PGRST116 is "not found" error, which is expected if no record exists
-      console.error("Error checking user statistics:", checkError)
-      return false
+    if (error) {
+      console.error("Error fetching leaderboard:", error)
+      return []
     }
 
-    // If record doesn't exist, create it
-    if (!existing) {
-      const { error: insertError } = await supabase.from("user_statistics").insert({
-        user_id: userId,
-      })
+    return data || []
+  } catch (error) {
+    console.error("Error fetching leaderboard:", error)
+    return []
+  }
+}
 
-      if (insertError) {
-        console.error("Error creating user statistics record:", insertError)
-        return false
-      }
+/**
+ * Ensure user statistics record exists
+ */
+export async function ensureUserStatisticsExist(userId: string): Promise<void> {
+  try {
+    // Insert a default record if it doesn't exist
+    const { error } = await supabase.from("user_statistics").insert({ user_id: userId }).select().single()
 
-      console.log("✅ Created user statistics record for:", userId)
+    // Ignore conflict errors (record already exists)
+    if (error && !error.message.includes("duplicate key")) {
+      console.error("Error ensuring user statistics exist:", error)
     }
-
-    return true
   } catch (error) {
     console.error("Error ensuring user statistics exist:", error)
-    return false
+  }
+}
+
+/**
+ * Migrate existing profile stats to user statistics
+ */
+export async function migrateProfileStatsToUserStatistics(): Promise<number> {
+  try {
+    const { data, error } = await supabase.rpc("migrate_profile_stats_to_user_statistics")
+
+    if (error) {
+      console.error("Error migrating profile stats:", error)
+      return 0
+    }
+
+    return data || 0
+  } catch (error) {
+    console.error("Error migrating profile stats:", error)
+    return 0
   }
 }
 
@@ -170,4 +199,14 @@ export function formatDuration(minutes: number): string {
     return `${hours}h ${mins}m`
   }
   return `${mins}m`
+}
+
+/**
+ * Format hours to human readable format
+ */
+export function formatHours(hours: number): string {
+  if (hours === 1) {
+    return "1 hour"
+  }
+  return `${hours} hours`
 }
