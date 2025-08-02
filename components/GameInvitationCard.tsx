@@ -14,15 +14,15 @@ interface GameInvitationCardProps {
     invitee_id: string
     status: "pending" | "accepted" | "declined"
     created_at: string
-    game_session: {
+    game_session?: {
       id: string
       name: string
       start_time: string
       status: string
       user_id: string
     }
-    inviter: {
-      full_name: string
+    inviter_profile?: {
+      full_name: string | null
       email: string
     }
   }
@@ -32,23 +32,25 @@ interface GameInvitationCardProps {
 export default function GameInvitationCard({ invitation, onInvitationUpdate }: GameInvitationCardProps) {
   const { user } = useAuth()
   const [isProcessing, setIsProcessing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleAcceptInvitation = async () => {
     if (!user || isProcessing) return
 
     setIsProcessing(true)
+    setError(null)
+
     try {
       console.log("🎯 Accepting game invitation:", invitation.id)
 
       // Use the new accept_game_invitation_v2 function
       const { data, error } = await supabase.rpc("accept_game_invitation_v2", {
-        p_invitation_id: invitation.id,
-        p_user_id: user.id,
+        invitation_id: invitation.id,
       })
 
       if (error) {
         console.error("Error accepting invitation:", error)
-        alert("Failed to accept invitation. Please try again.")
+        setError(`Failed to accept invitation: ${error.message}`)
         return
       }
 
@@ -63,9 +65,9 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
       setTimeout(() => {
         window.location.reload()
       }, 1000)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error accepting invitation:", error)
-      alert("Failed to accept invitation. Please try again.")
+      setError(error.message || "Failed to accept invitation")
     } finally {
       setIsProcessing(false)
     }
@@ -75,18 +77,23 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
     if (!user || isProcessing) return
 
     setIsProcessing(true)
+    setError(null)
+
     try {
       console.log("❌ Declining game invitation:", invitation.id)
 
       const { error } = await supabase
         .from("game_invitations")
-        .update({ status: "declined" })
+        .update({
+          status: "declined",
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", invitation.id)
         .eq("invitee_id", user.id)
 
       if (error) {
         console.error("Error declining invitation:", error)
-        alert("Failed to decline invitation. Please try again.")
+        setError(`Failed to decline invitation: ${error.message}`)
         return
       }
 
@@ -96,97 +103,120 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
       if (onInvitationUpdate) {
         onInvitationUpdate()
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error declining invitation:", error)
-      alert("Failed to decline invitation. Please try again.")
+      setError(error.message || "Failed to decline invitation")
     } finally {
       setIsProcessing(false)
     }
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
+    try {
+      return new Date(dateString).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    } catch {
+      return "Invalid date"
+    }
   }
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "pending":
-        return "text-yellow-600 bg-yellow-100"
+        return "text-yellow-700 bg-yellow-100 border-yellow-200"
       case "accepted":
-        return "text-green-600 bg-green-100"
+        return "text-green-700 bg-green-100 border-green-200"
       case "declined":
-        return "text-red-600 bg-red-100"
+        return "text-red-700 bg-red-100 border-red-200"
       default:
-        return "text-gray-600 bg-gray-100"
+        return "text-gray-700 bg-gray-100 border-gray-200"
     }
   }
 
   const getGameStatusColor = (status: string) => {
     switch (status) {
       case "active":
-        return "text-green-600 bg-green-100"
+        return "text-green-700 bg-green-100 border-green-200"
       case "pending":
-        return "text-blue-600 bg-blue-100"
+        return "text-blue-700 bg-blue-100 border-blue-200"
       case "completed":
-        return "text-gray-600 bg-gray-100"
+        return "text-gray-700 bg-gray-100 border-gray-200"
+      case "pending_close":
+        return "text-orange-700 bg-orange-100 border-orange-200"
       default:
-        return "text-gray-600 bg-gray-100"
+        return "text-gray-700 bg-gray-100 border-gray-200"
     }
   }
 
+  // Safe access to inviter information
+  const inviterName = invitation.inviter_profile?.full_name || invitation.inviter_profile?.email || "Unknown User"
+  const gameName = invitation.game_session?.name || "Poker Game"
+  const gameStatus = invitation.game_session?.status || "unknown"
+  const gameStartTime = invitation.game_session?.start_time
+
   return (
     <Card className="p-4 border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow">
-      <div className="space-y-3">
+      <div className="space-y-4">
         {/* Header */}
         <div className="flex justify-between items-start">
-          <div>
-            <h3 className="font-semibold text-lg text-gray-900">{invitation.game_session.name}</h3>
-            <p className="text-sm text-gray-600">Invited by {invitation.inviter.full_name}</p>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-lg text-gray-900 truncate">{gameName}</h3>
+            <p className="text-sm text-gray-600">Invited by {inviterName}</p>
           </div>
-          <div className="flex flex-col items-end space-y-1">
-            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(invitation.status)}`}>
+          <div className="flex flex-col items-end space-y-1 ml-4">
+            <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(invitation.status)}`}>
               {invitation.status.charAt(0).toUpperCase() + invitation.status.slice(1)}
             </span>
-            <span
-              className={`px-2 py-1 rounded-full text-xs font-medium ${getGameStatusColor(invitation.game_session.status)}`}
-            >
-              Game: {invitation.game_session.status}
+            <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getGameStatusColor(gameStatus)}`}>
+              Game: {gameStatus.replace("_", " ")}
             </span>
           </div>
         </div>
 
         {/* Game Details */}
-        <div className="text-sm text-gray-600 space-y-1">
-          <p>
-            <span className="font-medium">Game Start:</span> {formatDate(invitation.game_session.start_time)}
-          </p>
-          <p>
-            <span className="font-medium">Invited:</span> {formatDate(invitation.created_at)}
-          </p>
+        <div className="bg-gray-50 p-3 rounded-md">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            {gameStartTime && (
+              <div>
+                <span className="font-medium text-gray-700">Game Started:</span>
+                <p className="text-gray-600">{formatDate(gameStartTime)}</p>
+              </div>
+            )}
+            <div>
+              <span className="font-medium text-gray-700">Invited:</span>
+              <p className="text-gray-600">{formatDate(invitation.created_at)}</p>
+            </div>
+          </div>
         </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-md p-3">
+            <p className="text-red-700 text-sm">❌ {error}</p>
+          </div>
+        )}
 
         {/* Action Buttons */}
         {invitation.status === "pending" && (
-          <div className="flex space-x-2 pt-2">
+          <div className="flex space-x-2">
             <Button
               onClick={handleAcceptInvitation}
               disabled={isProcessing}
-              className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {isProcessing ? "Accepting..." : "Accept"}
+              {isProcessing ? "Accepting..." : "✅ Accept"}
             </Button>
             <Button
               onClick={handleDeclineInvitation}
               disabled={isProcessing}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {isProcessing ? "Declining..." : "Decline"}
+              {isProcessing ? "Declining..." : "❌ Decline"}
             </Button>
           </div>
         )}
@@ -194,15 +224,20 @@ export default function GameInvitationCard({ invitation, onInvitationUpdate }: G
         {/* Status Messages */}
         {invitation.status === "accepted" && (
           <div className="bg-green-50 border border-green-200 rounded-md p-3">
-            <p className="text-green-800 text-sm">
-              ✅ You've accepted this invitation. The game should appear in your dashboard.
+            <p className="text-green-800 text-sm font-medium">
+              ✅ You've accepted this invitation! The game should appear in your dashboard.
             </p>
+            {gameStatus === "active" && (
+              <p className="text-green-700 text-xs mt-1">
+                The game is currently active. Check your dashboard to join the action.
+              </p>
+            )}
           </div>
         )}
 
         {invitation.status === "declined" && (
           <div className="bg-red-50 border border-red-200 rounded-md p-3">
-            <p className="text-red-800 text-sm">❌ You've declined this invitation.</p>
+            <p className="text-red-800 text-sm font-medium">❌ You've declined this invitation.</p>
           </div>
         )}
       </div>
