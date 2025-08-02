@@ -18,6 +18,7 @@ import {
   updateUserStatisticsAfterGame,
   calculateGameSessionStats,
   ensureUserStatisticsExist,
+  debugUserStatistics,
 } from "../utils/userStatistics"
 import Navbar from "../components/Navbar"
 import PlayerManagement from "../components/PlayerManagement"
@@ -71,8 +72,14 @@ export default function Home() {
       setLoading(true)
       console.log("🔄 Loading user data for:", user!.id)
 
-      // Ensure user statistics exist - this is the only new addition
-      await ensureUserStatisticsExist(user!.id)
+      // Ensure user statistics exist - this is critical for data collection
+      const statsExist = await ensureUserStatisticsExist(user!.id)
+      if (!statsExist) {
+        console.warn("⚠️ Failed to ensure user statistics exist")
+      }
+
+      // Debug current statistics
+      await debugUserStatistics(user!.id)
 
       // Load games created by the user
       let sessionsData
@@ -405,16 +412,23 @@ export default function Home() {
     if (!user) return
 
     try {
-      console.log("📊 Starting user stats update for completed game:", session.id)
+      console.log("📊 Starting comprehensive user stats update for completed game:", session.id)
+      console.log("🎮 Game details:", {
+        name: session.name,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        playersCount: session.playersInGame.length,
+        invitedUsersCount: session.invitedUsers?.length || 0,
+      })
 
       // Get all users who should have their stats updated (host + invited users who accepted)
       const allParticipantIds = [user.id, ...(session.invitedUsers || [])]
-      console.log("Participant IDs to update:", allParticipantIds)
+      console.log("👥 Participant IDs to update:", allParticipantIds)
 
       // Get profiles for all participants with proper UUID handling
       const { data: participantProfiles, error: profilesError } = await supabase
         .from("profiles")
-        .select("id, full_name")
+        .select("id, full_name, email")
         .in("id", allParticipantIds)
 
       if (profilesError) {
@@ -422,35 +436,51 @@ export default function Home() {
         return
       }
 
-      console.log("Found participant profiles:", participantProfiles)
+      console.log(
+        "👤 Found participant profiles:",
+        participantProfiles?.map((p) => ({ id: p.id, name: p.full_name })),
+      )
 
       // Update stats for each participant who played in the game
       for (const participantProfile of participantProfiles) {
         try {
+          console.log(`🔍 Processing stats for ${participantProfile.full_name} (${participantProfile.id})`)
+
           // Find the player in the game using case-insensitive name matching
           const userPlayer = session.playersInGame.find((player) => {
             const playerName = player.name.toLowerCase().trim()
             const profileName = (participantProfile.full_name || "").toLowerCase().trim()
-            return playerName === profileName
+            const emailName = (participantProfile.email || "").toLowerCase().trim()
+
+            // Try matching by name first, then by email if name doesn't match
+            return playerName === profileName || playerName === emailName
           })
 
           if (userPlayer) {
+            console.log(`✅ Found matching player in game:`, {
+              playerName: userPlayer.name,
+              profileName: participantProfile.full_name,
+              buyInsCount: userPlayer.buyIns.length,
+              totalBuyIn: userPlayer.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0),
+              cashOutAmount: userPlayer.cashOutAmount || 0,
+            })
+
             // Calculate game session statistics using the new system
             const gameStats = calculateGameSessionStats(userPlayer, session.startTime, session.endTime || undefined)
 
-            console.log(`Updating statistics for ${participantProfile.full_name}:`, {
-              userId: participantProfile.id,
-              gameStats,
-            })
+            console.log(`📈 Calculated stats for ${participantProfile.full_name}:`, gameStats)
 
             // Update user statistics using the new system
             const result = await updateUserStatisticsAfterGame(participantProfile.id, gameStats)
 
             if (!result.success) {
-              console.error(`Error updating statistics for user ${participantProfile.id}:`, result.error)
+              console.error(`❌ Error updating statistics for user ${participantProfile.id}:`, result.error)
               // Continue with other users even if one fails
             } else {
               console.log(`✅ Successfully updated statistics for ${participantProfile.full_name}`)
+
+              // Debug the updated statistics
+              await debugUserStatistics(participantProfile.id)
             }
 
             // Also update the legacy profile stats for backward compatibility
@@ -461,23 +491,29 @@ export default function Home() {
               })
 
               if (legacyError) {
-                console.warn(`Legacy stats update failed for ${participantProfile.id}:`, legacyError)
+                console.warn(`⚠️ Legacy stats update failed for ${participantProfile.id}:`, legacyError)
+              } else {
+                console.log(`✅ Legacy stats updated for ${participantProfile.full_name}`)
               }
             } catch (legacyError) {
               console.warn("Legacy stats update not available:", legacyError)
             }
           } else {
-            console.log(`No matching player found for profile ${participantProfile.full_name} in game data`)
+            console.log(`❌ No matching player found for profile ${participantProfile.full_name} in game data`)
+            console.log(
+              "Available players in game:",
+              session.playersInGame.map((p) => ({ name: p.name, id: p.playerId })),
+            )
           }
         } catch (error) {
-          console.error(`Error processing stats for user ${participantProfile.id}:`, error)
+          console.error(`❌ Error processing stats for user ${participantProfile.id}:`, error)
           // Continue with other users
         }
       }
 
-      console.log("✅ User stats update completed")
+      console.log("✅ User stats update completed for all participants")
     } catch (error) {
-      console.error("Error updating user stats:", error)
+      console.error("❌ Error updating user stats:", error)
       // Don't throw the error - stats update failure shouldn't prevent game completion
     }
   }
@@ -597,6 +633,9 @@ export default function Home() {
     }
 
     try {
+      console.log("🏁 Ending game and updating statistics:", completedSession.id)
+
+      // Update database first
       await updateGameSessionInDatabase(completedSession)
 
       // Update stats for all participants (host + invited users) using new statistics system
@@ -605,6 +644,8 @@ export default function Home() {
       setGameSessions((prevSessions) => {
         return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
       })
+
+      console.log("✅ Game ended successfully with statistics updated")
     } catch (error) {
       console.error("Error ending game:", error)
       setGameSessions((prevSessions) => {
@@ -835,6 +876,12 @@ export default function Home() {
               </button>
               <button onClick={triggerRefresh} className="text-yellow-400 hover:text-yellow-300 text-xs underline">
                 Force Refresh Data
+              </button>
+              <button
+                onClick={() => user && debugUserStatistics(user.id)}
+                className="text-cyan-400 hover:text-cyan-300 text-xs underline"
+              >
+                Debug My Stats
               </button>
             </div>
           )}
