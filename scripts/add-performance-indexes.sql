@@ -195,3 +195,6 @@ SELECT
 FROM pg_tables 
 WHERE tablename IN ('game_sessions', 'friendships', 'friend_requests', 'game_invitations', 'profiles')
 ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
+
+-- Log completion
+SELECT 'Performance indexes created successfully' as status;
