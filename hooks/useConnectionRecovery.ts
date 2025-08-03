@@ -1,8 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useCallback, useState } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { supabase } from "../lib/supabase"
-import { useAuth } from "../contexts/AuthContext"
 
 interface ConnectionRecoveryOptions {
   onReconnect?: () => void
@@ -11,197 +10,250 @@ interface ConnectionRecoveryOptions {
   maxRetries?: number
 }
 
+interface ConnectionState {
+  isOnline: boolean
+  isConnected: boolean
+  isReconnecting: boolean
+  retryCount: number
+}
+
 export function useConnectionRecovery({
   onReconnect,
   onDisconnect,
-  checkInterval = 30000, // 30 seconds
+  checkInterval = 30000,
   maxRetries = 5,
 }: ConnectionRecoveryOptions = {}) {
-  const { user } = useAuth()
-  const [isOnline, setIsOnline] = useState(navigator.onLine)
-  const [isConnected, setIsConnected] = useState(true)
-  const [retryCount, setRetryCount] = useState(0)
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const [connectionState, setConnectionState] = useState<ConnectionState>({
+    isOnline: typeof navigator !== "undefined" ? navigator.onLine : true,
+    isConnected: true,
+    isReconnecting: false,
+    retryCount: 0,
+  })
+
+  const retryTimeoutRef = useRef<NodeJS.Timeout>()
+  const checkIntervalRef = useRef<NodeJS.Timeout>()
   const lastActivityRef = useRef<number>(Date.now())
-  const reconnectingRef = useRef(false)
 
-  // Update last activity timestamp
-  const updateActivity = useCallback(() => {
-    lastActivityRef.current = Date.now()
-  }, [])
-
-  // Check if the connection to Supabase is working
-  const checkConnection = useCallback(async (): Promise<boolean> => {
+  // Test database connection
+  const testConnection = useCallback(async (): Promise<boolean> => {
     try {
       const { error } = await supabase.from("profiles").select("id").limit(1).single()
 
       return !error
-    } catch {
+    } catch (error) {
+      console.error("Connection test failed:", error)
       return false
     }
   }, [])
 
   // Refresh auth session
-  const refreshSession = useCallback(async () => {
+  const refreshSession = useCallback(async (): Promise<boolean> => {
     try {
       const { data, error } = await supabase.auth.refreshSession()
       if (error) {
-        console.warn("Session refresh failed:", error)
+        console.error("Session refresh failed:", error)
         return false
       }
       console.log("✅ Session refreshed successfully")
       return true
     } catch (error) {
-      console.warn("Session refresh error:", error)
+      console.error("Session refresh error:", error)
       return false
     }
   }, [])
 
-  // Handle reconnection logic
-  const handleReconnection = useCallback(async () => {
-    if (reconnectingRef.current) return
+  // Attempt reconnection with exponential backoff
+  const attemptReconnection = useCallback(async () => {
+    if (connectionState.isReconnecting || connectionState.retryCount >= maxRetries) {
+      return
+    }
 
-    reconnectingRef.current = true
-    console.log("🔄 Attempting to reconnect...")
+    setConnectionState((prev) => ({
+      ...prev,
+      isReconnecting: true,
+      retryCount: prev.retryCount + 1,
+    }))
+
+    console.log(`🔄 Attempting reconnection (${connectionState.retryCount + 1}/${maxRetries})...`)
 
     try {
-      // First, refresh the auth session
-      await refreshSession()
+      // First refresh the auth session
+      const sessionRefreshed = await refreshSession()
 
-      // Then check database connection
-      const connected = await checkConnection()
+      // Then test database connection
+      const isConnected = await testConnection()
 
-      if (connected) {
-        console.log("✅ Connection restored")
-        setIsConnected(true)
-        setRetryCount(0)
+      if (isConnected && sessionRefreshed) {
+        console.log("✅ Reconnection successful")
+        setConnectionState((prev) => ({
+          ...prev,
+          isConnected: true,
+          isReconnecting: false,
+          retryCount: 0,
+        }))
         onReconnect?.()
       } else {
-        throw new Error("Connection check failed")
+        throw new Error("Connection test failed")
       }
     } catch (error) {
-      console.warn("❌ Reconnection failed:", error)
-      setRetryCount((prev) => prev + 1)
+      console.error("Reconnection failed:", error)
 
-      if (retryCount < maxRetries) {
-        // Exponential backoff: 2s, 4s, 8s, 16s, 32s
-        const delay = Math.min(2000 * Math.pow(2, retryCount), 32000)
-        setTimeout(handleReconnection, delay)
-      }
-    } finally {
-      reconnectingRef.current = false
+      // Schedule next retry with exponential backoff
+      const delay = Math.min(1000 * Math.pow(2, connectionState.retryCount), 30000)
+
+      retryTimeoutRef.current = setTimeout(() => {
+        setConnectionState((prev) => ({ ...prev, isReconnecting: false }))
+        attemptReconnection()
+      }, delay)
     }
-  }, [checkConnection, refreshSession, onReconnect, retryCount, maxRetries])
+  }, [
+    connectionState.isReconnecting,
+    connectionState.retryCount,
+    maxRetries,
+    refreshSession,
+    testConnection,
+    onReconnect,
+  ])
 
-  // Handle visibility change (when user returns to tab)
-  const handleVisibilityChange = useCallback(async () => {
-    if (document.visibilityState === "visible") {
-      const timeSinceLastActivity = Date.now() - lastActivityRef.current
-
-      // If user was away for more than 5 minutes, check connection
-      if (timeSinceLastActivity > 5 * 60 * 1000) {
-        console.log("🔍 User returned after long absence, checking connection...")
-
-        const connected = await checkConnection()
-        if (!connected) {
-          setIsConnected(false)
-          onDisconnect?.()
-          handleReconnection()
-        } else {
-          // Refresh session preventively
-          await refreshSession()
-        }
-      }
-
-      updateActivity()
+  // Force reconnection (manual retry)
+  const forceReconnect = useCallback(() => {
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current)
     }
-  }, [checkConnection, refreshSession, handleReconnection, onDisconnect, updateActivity])
+
+    setConnectionState((prev) => ({
+      ...prev,
+      retryCount: 0,
+      isReconnecting: false,
+    }))
+
+    attemptReconnection()
+  }, [attemptReconnection])
 
   // Handle online/offline events
-  const handleOnline = useCallback(() => {
-    console.log("🌐 Network connection restored")
-    setIsOnline(true)
-    handleReconnection()
-  }, [handleReconnection])
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log("🌐 Network connection restored")
+      setConnectionState((prev) => ({ ...prev, isOnline: true }))
 
-  const handleOffline = useCallback(() => {
-    console.log("📵 Network connection lost")
-    setIsOnline(false)
-    setIsConnected(false)
-    onDisconnect?.()
-  }, [onDisconnect])
+      // Test database connection when coming back online
+      testConnection().then((isConnected) => {
+        if (isConnected) {
+          setConnectionState((prev) => ({ ...prev, isConnected: true, retryCount: 0 }))
+          onReconnect?.()
+        } else {
+          attemptReconnection()
+        }
+      })
+    }
+
+    const handleOffline = () => {
+      console.log("📵 Network connection lost")
+      setConnectionState((prev) => ({
+        ...prev,
+        isOnline: false,
+        isConnected: false,
+        isReconnecting: false,
+      }))
+      onDisconnect?.()
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handleOnline)
+      window.addEventListener("offline", handleOffline)
+
+      return () => {
+        window.removeEventListener("online", handleOnline)
+        window.removeEventListener("offline", handleOffline)
+      }
+    }
+  }, [testConnection, attemptReconnection, onReconnect, onDisconnect])
+
+  // Handle visibility change (tab switching, phone lock/unlock)
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (typeof document === "undefined") return
+
+      if (document.visibilityState === "visible") {
+        const timeSinceLastActivity = Date.now() - lastActivityRef.current
+
+        // If user was away for more than 5 minutes, check connection
+        if (timeSinceLastActivity > 5 * 60 * 1000) {
+          console.log("🔄 User returned after long absence, checking connection...")
+
+          const isConnected = await testConnection()
+          if (!isConnected) {
+            setConnectionState((prev) => ({ ...prev, isConnected: false }))
+            attemptReconnection()
+          } else {
+            // Refresh session to prevent token expiration
+            await refreshSession()
+            onReconnect?.()
+          }
+        }
+
+        lastActivityRef.current = Date.now()
+      }
+    }
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange)
+
+      return () => {
+        document.removeEventListener("visibilitychange", handleVisibilityChange)
+      }
+    }
+  }, [testConnection, attemptReconnection, refreshSession, onReconnect])
 
   // Periodic connection check
-  const startPeriodicCheck = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-    }
-
-    intervalRef.current = setInterval(async () => {
-      if (!isOnline) return
-
-      const connected = await checkConnection()
-
-      if (!connected && isConnected) {
-        console.log("⚠️ Connection lost during periodic check")
-        setIsConnected(false)
-        onDisconnect?.()
-        handleReconnection()
-      } else if (connected && !isConnected) {
-        console.log("✅ Connection restored during periodic check")
-        setIsConnected(true)
-        setRetryCount(0)
-        onReconnect?.()
-      }
-    }, checkInterval)
-  }, [checkConnection, isOnline, isConnected, onReconnect, onDisconnect, handleReconnection, checkInterval])
-
-  // Setup event listeners
   useEffect(() => {
-    // Network status listeners
-    window.addEventListener("online", handleOnline)
-    window.addEventListener("offline", handleOffline)
+    if (checkInterval > 0) {
+      checkIntervalRef.current = setInterval(async () => {
+        if (connectionState.isOnline && !connectionState.isReconnecting) {
+          const isConnected = await testConnection()
 
-    // Visibility change listener
-    document.addEventListener("visibilitychange", handleVisibilityChange)
+          if (!isConnected && connectionState.isConnected) {
+            console.log("⚠️ Connection lost during periodic check")
+            setConnectionState((prev) => ({ ...prev, isConnected: false }))
+            onDisconnect?.()
+            attemptReconnection()
+          }
+        }
+      }, checkInterval)
 
-    // Activity listeners to track user engagement
-    const activityEvents = ["mousedown", "mousemove", "keypress", "scroll", "touchstart"]
-    activityEvents.forEach((event) => {
-      document.addEventListener(event, updateActivity, { passive: true })
-    })
-
-    // Start periodic connection check
-    if (user) {
-      startPeriodicCheck()
-    }
-
-    return () => {
-      window.removeEventListener("online", handleOnline)
-      window.removeEventListener("offline", handleOffline)
-      document.removeEventListener("visibilitychange", handleVisibilityChange)
-
-      activityEvents.forEach((event) => {
-        document.removeEventListener(event, updateActivity)
-      })
-
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
+      return () => {
+        if (checkIntervalRef.current) {
+          clearInterval(checkIntervalRef.current)
+        }
       }
     }
-  }, [user, handleOnline, handleOffline, handleVisibilityChange, updateActivity, startPeriodicCheck])
+  }, [
+    checkInterval,
+    connectionState.isOnline,
+    connectionState.isReconnecting,
+    connectionState.isConnected,
+    testConnection,
+    onDisconnect,
+    attemptReconnection,
+  ])
 
-  // Force reconnection function
-  const forceReconnect = useCallback(() => {
-    setRetryCount(0)
-    handleReconnection()
-  }, [handleReconnection])
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current)
+      }
+      if (checkIntervalRef.current) {
+        clearInterval(checkIntervalRef.current)
+      }
+    }
+  }, [])
 
   return {
-    isOnline,
-    isConnected,
-    retryCount,
+    isOnline: connectionState.isOnline,
+    isConnected: connectionState.isConnected,
+    isReconnecting: connectionState.isReconnecting,
+    retryCount: connectionState.retryCount,
     forceReconnect,
-    isReconnecting: reconnectingRef.current,
   }
 }

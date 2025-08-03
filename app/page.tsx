@@ -14,7 +14,6 @@ import type {
 import { generateId, generateLogId } from "../utils"
 import { usePWA } from "../hooks/usePWA"
 import { useGameStateSync } from "../hooks/useGameStateSync"
-import { useConnectionRecovery } from "../hooks/useConnectionRecovery"
 import Navbar from "../components/Navbar"
 import PlayerManagement from "../components/PlayerManagement"
 import GameDashboard from "../components/GameDashboard"
@@ -29,7 +28,7 @@ import InvitationDiagnostics from "../components/debug/InvitationDiagnostics"
 import GameInviteSystemAnalysis from "../components/analysis/GameInviteSystemAnalysis"
 
 export default function Home() {
-  const { user, loading: authLoading, emailVerified } = useAuth()
+  const { user, loading: authLoading, emailVerified, refreshProfile } = useAuth()
   const [players, setPlayers] = useState<Player[]>([])
   const [gameSessions, setGameSessions] = useState<GameSession[]>([])
   const [currentView, setCurrentView] = useState<View>("dashboard")
@@ -52,28 +51,6 @@ export default function Home() {
   })
 
   usePWA()
-
-  // Use connection recovery hook
-  const { isOnline, isConnected, isReconnecting, forceReconnect } = useConnectionRecovery({
-    onReconnect: () => {
-      console.log("🔄 Connection restored, reloading data...")
-      if (user && !authLoading) {
-        loadUserData()
-      }
-      setConnectionStatus((prev) => ({ ...prev, isConnected: true, isReconnecting: false }))
-    },
-    onDisconnect: () => {
-      console.log("📵 Connection lost")
-      setConnectionStatus((prev) => ({ ...prev, isConnected: false }))
-    },
-    checkInterval: 30000, // Check every 30 seconds
-    maxRetries: 5,
-  })
-
-  // Update connection status
-  useEffect(() => {
-    setConnectionStatus({ isOnline, isConnected, isReconnecting })
-  }, [isOnline, isConnected, isReconnecting])
 
   // Use game state sync hook for better refresh handling
   const gameStateSync = useGameStateSync({
@@ -218,11 +195,7 @@ export default function Home() {
       // Fallback: Try to load from local storage
       const localSessions = gameStateSync.forceSync ? [] : []
       setGameSessions(localSessions)
-
-      // Don't show alert if we're offline - the connection recovery will handle it
-      if (isOnline) {
-        alert("Unable to load your games from server. Loading local data if available.")
-      }
+      alert("Unable to load your games from server. Loading local data if available.")
     } finally {
       setLoading(false)
       // Restore current view from localStorage after refresh
@@ -251,10 +224,7 @@ export default function Home() {
             if (gameStateSync.forceSync) {
               gameStateSync.forceSync()
             }
-            // Don't show alert if offline - connection recovery will handle it
-            if (isOnline) {
-              alert("Database connection failed. Loading local data if available.")
-            }
+            alert("Database connection failed. Loading local data if available.")
           }
         })
         .catch((error) => {
@@ -264,10 +234,7 @@ export default function Home() {
           if (gameStateSync.forceSync) {
             gameStateSync.forceSync()
           }
-          // Don't show alert if offline
-          if (isOnline) {
-            alert("Unable to verify database connection. Loading local data if available.")
-          }
+          alert("Unable to verify database connection. Loading local data if available.")
         })
 
       // Safety timeout - force loading to false after 15 seconds
@@ -282,7 +249,7 @@ export default function Home() {
       setGameSessions([])
       setLoading(false)
     }
-  }, [user, authLoading, isOnline])
+  }, [user, authLoading])
 
   // Add this useEffect after the existing useEffect
   useEffect(() => {
@@ -494,6 +461,10 @@ export default function Home() {
         }
       }
 
+      // Refresh the current user's profile data to show updated stats
+      console.log("🔄 Refreshing profile data after stats update...")
+      await refreshProfile()
+
       console.log("✅ User stats update completed")
     } catch (error) {
       console.error("Error updating user stats:", error)
@@ -691,33 +662,6 @@ export default function Home() {
     return "default-background"
   }
 
-  const renderConnectionStatus = () => {
-    if (!isOnline) {
-      return (
-        <div className="bg-red-600 text-white px-4 py-2 text-center text-sm">
-          📵 You're offline. Some features may not work properly.
-        </div>
-      )
-    }
-
-    if (!isConnected && isOnline) {
-      return (
-        <div className="bg-yellow-600 text-white px-4 py-2 text-center text-sm flex items-center justify-center gap-2">
-          ⚠️ Connection issues detected.
-          {isReconnecting ? (
-            <span>Reconnecting...</span>
-          ) : (
-            <button onClick={forceReconnect} className="underline hover:no-underline">
-              Retry connection
-            </button>
-          )}
-        </div>
-      )
-    }
-
-    return null
-  }
-
   const renderView = () => {
     // Show loading screen while checking auth
     if (authLoading) {
@@ -768,7 +712,6 @@ export default function Home() {
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
             <p className="text-text-secondary">Loading your data...</p>
-            {!isConnected && <p className="text-yellow-500 text-sm mt-2">Connection issues detected...</p>}
           </div>
         </div>
       )
@@ -842,9 +785,6 @@ export default function Home() {
 
   return (
     <div className={`min-h-screen flex flex-col bg-surface-main ${getBackgroundClass()}`}>
-      {/* Connection status banner */}
-      {renderConnectionStatus()}
-
       {/* Only show navbar if user is verified */}
       {user && emailVerified && (
         <Navbar
@@ -862,7 +802,7 @@ export default function Home() {
       {/* Only show footer if user is verified */}
       {user && emailVerified && (
         <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
-          Poker Homegame Manager V52 &copy; {new Date().getFullYear()}
+          Poker Homegame Manager V53 &copy; {new Date().getFullYear()}
           {process.env.NODE_ENV === "development" && (
             <div className="mt-2 space-x-4">
               <button

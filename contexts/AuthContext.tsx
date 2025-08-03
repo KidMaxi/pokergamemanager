@@ -9,11 +9,9 @@ interface Profile {
   id: string
   email: string
   full_name: string | null
-  avatar_url: string | null
   created_at: string
   updated_at: string
   is_admin: boolean
-  preferences: any
   all_time_profit_loss: number
   games_played: number
   last_game_date: string | null
@@ -28,6 +26,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: any }>
   signOut: () => Promise<void>
   updateProfile: (updates: Partial<Profile>) => Promise<{ error: any }>
+  refreshProfile: () => Promise<void>
   resendVerification: () => Promise<{ error: any }>
 }
 
@@ -92,6 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchProfile = async (userId: string) => {
     try {
+      console.log("🔄 Fetching profile for user:", userId)
       const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
 
       if (error) {
@@ -100,11 +100,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
+      console.log("✅ Profile loaded:", {
+        id: data.id,
+        full_name: data.full_name,
+        games_played: data.games_played,
+        all_time_profit_loss: data.all_time_profit_loss,
+      })
       setProfile(data)
     } catch (error) {
       console.error("Error fetching profile:", error)
       // Continue without profile data rather than blocking the app
     }
+  }
+
+  const refreshProfile = async () => {
+    if (!user) return
+    console.log("🔄 Refreshing profile data...")
+    await fetchProfile(user.id)
   }
 
   const signUp = async (email: string, password: string, fullName?: string) => {
@@ -209,6 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signIn,
     signOut,
     updateProfile,
+    refreshProfile,
     resendVerification,
   }
 
