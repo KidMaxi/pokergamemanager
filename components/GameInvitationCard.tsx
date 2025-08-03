@@ -1,208 +1,194 @@
 "use client"
 
-import type React from "react"
 import { useState } from "react"
-import type { GameInvitation } from "../types"
-import { formatDate } from "../utils"
-import Button from "./common/Button"
-import Card from "./common/Card"
-import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
+import { useAuth } from "../contexts/AuthContext"
 
 interface GameInvitationCardProps {
-  invitation: GameInvitation
-  onInvitationHandled: () => void
+  invitation: {
+    id: string
+    game_session_id: string
+    inviter_id: string
+    status: string
+    created_at: string
+    game_session: {
+      id: string
+      name: string
+      start_time: string
+      status: string
+      point_to_cash_rate: number
+    }
+    inviter: {
+      full_name: string
+    }
+  }
+  onInvitationUpdate: () => void
 }
 
-const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onInvitationHandled }) => {
-  const { user, profile } = useAuth()
-  const [acceptLoading, setAcceptLoading] = useState(false)
-  const [declineLoading, setDeclineLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
+export default function GameInvitationCard({ invitation, onInvitationUpdate }: GameInvitationCardProps) {
+  const { user } = useAuth()
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
-  const handleAccept = async () => {
-    if (!user || !profile) {
-      setError("User profile not available. Please refresh and try again.")
-      return
-    }
+  const handleAcceptInvitation = async () => {
+    if (!user || isProcessing) return
 
-    setAcceptLoading(true)
-    setError("")
-    setSuccess("")
+    setIsProcessing(true)
+    setMessage(null)
 
     try {
-      console.log("🎮 Starting invitation acceptance process...", {
-        invitationId: invitation.id,
-        gameSessionId: invitation.game_session_id,
-        userId: user.id,
-        userProfile: profile,
-      })
+      console.log("🎯 Accepting game invitation:", invitation.id)
 
-      // Use the restored database function to accept the invitation
-      const { data: result, error: acceptError } = await supabase.rpc("accept_game_invitation", {
+      const { data, error } = await supabase.rpc("accept_game_invitation", {
         invitation_id: invitation.id,
+        user_id: user.id,
       })
 
-      if (acceptError) {
-        console.error("❌ Error accepting invitation via function:", acceptError)
-        throw new Error(`Failed to accept invitation: ${acceptError.message}`)
+      if (error) {
+        console.error("❌ Error accepting invitation:", error)
+        setMessage({
+          type: "error",
+          text: `Failed to accept invitation: ${error.message}`,
+        })
+        return
       }
 
-      console.log("✅ Function result:", result)
+      console.log("✅ Invitation accepted successfully")
+      setMessage({
+        type: "success",
+        text: "Invitation accepted! You can now join the game.",
+      })
 
-      // Check the result from the function
-      if (!result?.success) {
-        console.error("❌ Function returned error:", result?.error)
-        throw new Error(result?.error || "Unknown error occurred")
-      }
-
-      console.log("✅ Invitation accepted successfully:", result)
-      setSuccess(
-        `Successfully joined "${invitation.game_session?.name || result.game_name}"! You've been added as a player with ${result.initial_points} points.`,
-      )
-
-      // Notify parent component to refresh
+      // Refresh the invitations list
       setTimeout(() => {
-        onInvitationHandled()
-        // Force a page refresh to ensure all data is updated
-        window.location.reload()
-      }, 2000)
-    } catch (error: any) {
-      console.error("❌ Error accepting invitation:", error)
-      setError(`Failed to accept invitation: ${error.message}`)
+        onInvitationUpdate()
+      }, 1500)
+    } catch (error) {
+      console.error("❌ Unexpected error:", error)
+      setMessage({
+        type: "error",
+        text: "An unexpected error occurred. Please try again.",
+      })
     } finally {
-      setAcceptLoading(false)
+      setIsProcessing(false)
     }
   }
 
-  const handleDecline = async () => {
-    if (!user) return
+  const handleDeclineInvitation = async () => {
+    if (!user || isProcessing) return
 
-    setDeclineLoading(true)
-    setError("")
-    setSuccess("")
+    setIsProcessing(true)
+    setMessage(null)
 
     try {
-      console.log("🚫 Declining invitation:", invitation.id)
-
-      // Update the invitation status to declined (original v192 approach)
-      const { error: updateError } = await supabase
+      const { error } = await supabase
         .from("game_invitations")
-        .update({
-          status: "declined",
-          updated_at: new Date().toISOString(),
-        })
+        .update({ status: "declined" })
         .eq("id", invitation.id)
         .eq("invitee_id", user.id)
 
-      if (updateError) {
-        throw updateError
+      if (error) {
+        console.error("Error declining invitation:", error)
+        setMessage({
+          type: "error",
+          text: "Failed to decline invitation. Please try again.",
+        })
+        return
       }
 
-      console.log("✅ Invitation declined successfully")
-      setSuccess("Invitation declined.")
+      setMessage({
+        type: "success",
+        text: "Invitation declined.",
+      })
 
-      // Remove the invitation from the UI after a short delay
       setTimeout(() => {
-        onInvitationHandled()
+        onInvitationUpdate()
       }, 1500)
-    } catch (error: any) {
-      console.error("❌ Error declining invitation:", error)
-      setError("Failed to decline invitation. Please try again.")
+    } catch (error) {
+      console.error("Unexpected error declining invitation:", error)
+      setMessage({
+        type: "error",
+        text: "An unexpected error occurred. Please try again.",
+      })
     } finally {
-      setDeclineLoading(false)
+      setIsProcessing(false)
     }
   }
 
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  }
+
   return (
-    <Card className="mb-3 sm:mb-4 border-blue-500 bg-blue-800/80 backdrop-blur-sm">
-      <div className="space-y-3">
-        <div className="flex items-center space-x-2">
-          <span className="text-2xl">🎮</span>
-          <h4 className="text-base sm:text-lg font-semibold text-blue-300 truncate">Game Invitation</h4>
-        </div>
-
-        <div className="text-xs sm:text-sm text-text-secondary space-y-2">
-          <div className="bg-blue-700/60 border border-blue-400 rounded p-3">
-            <p className="text-blue-100">
-              <strong className="text-white">
-                {invitation.inviter_profile?.full_name || invitation.inviter_profile?.email || "Someone"}
-              </strong>{" "}
-              invited you to join:
+    <div className="bg-blue-800/80 backdrop-blur-sm border border-blue-600/50 rounded-lg p-4 mb-4 shadow-lg">
+      <div className="bg-blue-700/60 rounded-lg p-4">
+        <div className="flex justify-between items-start mb-3">
+          <div>
+            <h3 className="text-lg font-semibold text-blue-100 mb-1">Game Invitation</h3>
+            <p className="text-blue-200 text-sm">
+              From: <span className="font-medium text-blue-100">{invitation.inviter.full_name}</span>
             </p>
-            <p className="text-white font-medium text-base mt-1 mb-2">
-              "{invitation.game_session?.name || "Poker Game"}"
-            </p>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-blue-200">Game Started:</span>
-                <br />
-                <span className="text-white">
-                  {invitation.game_session?.start_time ? formatDate(invitation.game_session.start_time, false) : "N/A"}
-                </span>
-              </div>
-              <div>
-                <span className="text-blue-200">Status:</span>
-                <br />
-                <span
-                  className={`font-semibold ${
-                    invitation.game_session?.status === "active" ? "text-green-400" : "text-yellow-400"
-                  }`}
-                >
-                  {invitation.game_session?.status === "active"
-                    ? "🟢 Active"
-                    : "⏸️ " + (invitation.game_session?.status || "Unknown")}
-                </span>
-              </div>
-            </div>
           </div>
-
-          <p className="text-text-secondary text-xs">Invited: {formatDate(invitation.created_at, false)}</p>
+          <span className="bg-blue-600/60 text-blue-100 px-2 py-1 rounded text-xs font-medium">
+            {invitation.status}
+          </span>
         </div>
 
-        {success && (
-          <div className="bg-green-800/60 border border-green-400 rounded p-3">
-            <p className="text-green-300 text-sm font-semibold">✅ {success}</p>
+        <div className="space-y-2 mb-4">
+          <div className="flex justify-between">
+            <span className="text-blue-300 text-sm">Game:</span>
+            <span className="text-blue-100 font-medium">{invitation.game_session.name}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-blue-300 text-sm">Start Time:</span>
+            <span className="text-blue-100">{formatDate(invitation.game_session.start_time)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-blue-300 text-sm">Point Rate:</span>
+            <span className="text-blue-100">${invitation.game_session.point_to_cash_rate}/point</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-blue-300 text-sm">Status:</span>
+            <span className="text-blue-100 capitalize">{invitation.game_session.status}</span>
+          </div>
+        </div>
+
+        {message && (
+          <div
+            className={`p-3 rounded-lg mb-4 ${
+              message.type === "success"
+                ? "bg-green-800/60 text-green-100 border border-green-600/50"
+                : "bg-red-800/60 text-red-100 border border-red-600/50"
+            }`}
+          >
+            {message.text}
           </div>
         )}
 
-        {error && (
-          <div className="bg-red-800/60 border border-red-400 rounded p-3">
-            <p className="text-red-300 text-sm">❌ {error}</p>
+        {invitation.status === "pending" && (
+          <div className="flex space-x-3">
+            <button
+              onClick={handleAcceptInvitation}
+              disabled={isProcessing}
+              className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-green-800 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:cursor-not-allowed"
+            >
+              {isProcessing ? "Processing..." : "Accept"}
+            </button>
+            <button
+              onClick={handleDeclineInvitation}
+              disabled={isProcessing}
+              className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:cursor-not-allowed"
+            >
+              {isProcessing ? "Processing..." : "Decline"}
+            </button>
           </div>
         )}
-
-        <div className="flex space-x-2 pt-2">
-          <Button
-            onClick={handleAccept}
-            variant="primary"
-            size="sm"
-            disabled={acceptLoading || declineLoading || !!success}
-            className="flex-1"
-          >
-            {acceptLoading ? (
-              <div className="flex items-center justify-center space-x-2">
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                <span>Joining Game...</span>
-              </div>
-            ) : (
-              "✅ Accept & Join Game"
-            )}
-          </Button>
-          <Button
-            onClick={handleDecline}
-            variant="danger"
-            size="sm"
-            disabled={acceptLoading || declineLoading || !!success}
-            className="flex-1"
-          >
-            {declineLoading ? "Declining..." : "❌ Decline"}
-          </Button>
-        </div>
       </div>
-    </Card>
+    </div>
   )
 }
-
-export default GameInvitationCard
