@@ -1,202 +1,206 @@
 "use client"
 
+import type React from "react"
 import { useState } from "react"
-import { supabase } from "../lib/supabase"
-import { useAuth } from "../contexts/AuthContext"
+import type { GameInvitation } from "../types"
+import { formatDate } from "../utils"
 import Button from "./common/Button"
 import Card from "./common/Card"
-
-interface GameInvitation {
-  id: string
-  game_session_id: string
-  inviter_id: string
-  invitee_id: string
-  status: "pending" | "accepted" | "declined"
-  created_at: string
-  inviter_profile?: {
-    full_name: string | null
-    email: string
-  }
-  game_session?: {
-    id: string
-    name: string
-    start_time: string
-    status: string
-    point_to_cash_rate: number
-  }
-}
+import { useAuth } from "../contexts/AuthContext"
+import { supabase } from "../lib/supabase"
 
 interface GameInvitationCardProps {
   invitation: GameInvitation
-  onInvitationHandled?: () => void
+  onInvitationHandled: () => void
 }
 
-export default function GameInvitationCard({ invitation, onInvitationHandled }: GameInvitationCardProps) {
-  const { user } = useAuth()
-  const [loading, setLoading] = useState(false)
-  const [status, setStatus] = useState(invitation.status)
-  const [message, setMessage] = useState("")
+const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onInvitationHandled }) => {
+  const { user, profile } = useAuth()
+  const [acceptLoading, setAcceptLoading] = useState(false)
+  const [declineLoading, setDeclineLoading] = useState(false)
   const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
 
-  const handleAcceptInvitation = async () => {
-    if (!user) return
+  const handleAccept = async () => {
+    if (!user || !profile) {
+      setError("User profile not available. Please refresh and try again.")
+      return
+    }
 
-    setLoading(true)
+    setAcceptLoading(true)
     setError("")
-    setMessage("")
+    setSuccess("")
 
     try {
-      console.log("🎯 Accepting game invitation:", invitation.id)
-
-      // Call the database function to accept the invitation
-      const { data, error } = await supabase.rpc("accept_game_invitation", {
-        invitation_id: invitation.id,
-        user_id: user.id,
+      console.log("🎮 Starting invitation acceptance process...", {
+        invitationId: invitation.id,
+        gameSessionId: invitation.game_session_id,
+        userId: user.id,
+        userProfile: profile,
       })
 
-      if (error) {
-        console.error("Error accepting invitation:", error)
-        throw error
+      // Use the improved database function to accept the invitation
+      const { data: result, error: acceptError } = await supabase.rpc("accept_game_invitation", {
+        invitation_id: invitation.id,
+      })
+
+      if (acceptError) {
+        console.error("❌ Error accepting invitation via function:", acceptError)
+        throw new Error(`Failed to accept invitation: ${acceptError.message}`)
       }
 
-      console.log("✅ Invitation accepted successfully:", data)
-      setStatus("accepted")
-      setMessage("Invitation accepted! You can now see this game in your dashboard.")
+      // Check the result from the function
+      if (!result?.success) {
+        console.error("❌ Function returned error:", result?.error)
+        throw new Error(result?.error || "Unknown error occurred")
+      }
 
-      // Call the callback to refresh the parent component
-      if (onInvitationHandled) {
+      console.log("✅ Invitation accepted successfully:", result)
+      setSuccess(
+        `Successfully joined "${invitation.game_session?.name}"! You've been added as a player with ${result.initial_points} points.`,
+      )
+
+      // Notify parent component to refresh
+      setTimeout(() => {
         onInvitationHandled()
-      }
+        // Force a page refresh to ensure all data is updated
+        window.location.reload()
+      }, 2000)
     } catch (error: any) {
-      console.error("Error accepting invitation:", error)
-      setError(error.message || "Failed to accept invitation. Please try again.")
+      console.error("❌ Error accepting invitation:", error)
+      setError(`Failed to accept invitation: ${error.message}`)
     } finally {
-      setLoading(false)
+      setAcceptLoading(false)
     }
   }
 
-  const handleDeclineInvitation = async () => {
+  const handleDecline = async () => {
     if (!user) return
 
-    setLoading(true)
+    setDeclineLoading(true)
     setError("")
-    setMessage("")
+    setSuccess("")
 
     try {
-      console.log("❌ Declining game invitation:", invitation.id)
+      console.log("🚫 Declining invitation:", invitation.id)
 
-      const { error } = await supabase
+      // Update the invitation status to declined
+      const { error: updateError } = await supabase
         .from("game_invitations")
-        .update({ status: "declined", updated_at: new Date().toISOString() })
+        .update({
+          status: "declined",
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", invitation.id)
         .eq("invitee_id", user.id)
 
-      if (error) {
-        console.error("Error declining invitation:", error)
-        throw error
+      if (updateError) {
+        throw updateError
       }
 
       console.log("✅ Invitation declined successfully")
-      setStatus("declined")
-      setMessage("Invitation declined.")
+      setSuccess("Invitation declined.")
 
-      // Call the callback to refresh the parent component
-      if (onInvitationHandled) {
+      // Remove the invitation from the UI after a short delay
+      setTimeout(() => {
         onInvitationHandled()
-      }
+      }, 1500)
     } catch (error: any) {
-      console.error("Error declining invitation:", error)
-      setError(error.message || "Failed to decline invitation. Please try again.")
+      console.error("❌ Error declining invitation:", error)
+      setError("Failed to decline invitation. Please try again.")
     } finally {
-      setLoading(false)
-    }
-  }
-
-  const getStatusColor = () => {
-    switch (status) {
-      case "accepted":
-        return "text-green-400"
-      case "declined":
-        return "text-red-400"
-      default:
-        return "text-yellow-400"
-    }
-  }
-
-  const getStatusText = () => {
-    switch (status) {
-      case "accepted":
-        return "✅ Accepted"
-      case "declined":
-        return "❌ Declined"
-      default:
-        return "⏳ Pending"
+      setDeclineLoading(false)
     }
   }
 
   return (
-    <Card className="bg-blue-800/80 backdrop-blur-sm border-2 border-blue-600 mb-4">
-      <div className="bg-blue-700/60 rounded-lg p-4">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-blue-100 mb-1">
-              🎮 Game Invitation: {invitation.game_session?.name || "Poker Game"}
-            </h3>
-            <p className="text-blue-200 text-sm">
-              From: {invitation.inviter_profile?.full_name || invitation.inviter_profile?.email || "Unknown Player"}
-            </p>
-            <p className="text-blue-300 text-xs mt-1">
-              Point-to-Cash Rate: ${invitation.game_session?.point_to_cash_rate || "1.00"}
-            </p>
-          </div>
-          <div className={`text-sm font-medium ${getStatusColor()}`}>{getStatusText()}</div>
+    <Card className="mb-3 sm:mb-4 border-blue-500 bg-blue-900/10">
+      <div className="space-y-3">
+        <div className="flex items-center space-x-2">
+          <span className="text-2xl">🎮</span>
+          <h4 className="text-base sm:text-lg font-semibold text-blue-400 truncate">Game Invitation</h4>
         </div>
 
-        {message && (
-          <div className="bg-green-800/60 border border-green-600 rounded p-3 mb-3">
-            <p className="text-green-200 text-sm">✅ {message}</p>
+        <div className="text-xs sm:text-sm text-text-secondary space-y-2">
+          <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
+            <p className="text-blue-200">
+              <strong className="text-white">
+                {invitation.inviter_profile?.full_name || invitation.inviter_profile?.email || "Someone"}
+              </strong>{" "}
+              invited you to join:
+            </p>
+            <p className="text-white font-medium text-base mt-1 mb-2">
+              "{invitation.game_session?.name || "Poker Game"}"
+            </p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-blue-300">Game Started:</span>
+                <br />
+                <span className="text-white">
+                  {invitation.game_session?.start_time ? formatDate(invitation.game_session.start_time, false) : "N/A"}
+                </span>
+              </div>
+              <div>
+                <span className="text-blue-300">Status:</span>
+                <br />
+                <span
+                  className={`font-semibold ${
+                    invitation.game_session?.status === "active" ? "text-green-400" : "text-yellow-400"
+                  }`}
+                >
+                  {invitation.game_session?.status === "active"
+                    ? "🟢 Active"
+                    : "⏸️ " + (invitation.game_session?.status || "Unknown")}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-text-secondary text-xs">Invited: {formatDate(invitation.created_at, false)}</p>
+        </div>
+
+        {success && (
+          <div className="bg-green-900/20 border border-green-600 rounded p-3">
+            <p className="text-green-400 text-sm font-semibold">✅ {success}</p>
           </div>
         )}
 
         {error && (
-          <div className="bg-red-800/60 border border-red-600 rounded p-3 mb-3">
-            <p className="text-red-200 text-sm">❌ {error}</p>
+          <div className="bg-red-900/20 border border-red-600 rounded p-3">
+            <p className="text-red-400 text-sm">❌ {error}</p>
           </div>
         )}
 
-        {status === "pending" && (
-          <div className="flex space-x-3">
-            <Button
-              onClick={handleAcceptInvitation}
-              disabled={loading}
-              variant="primary"
-              className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-            >
-              {loading ? "Accepting..." : "Accept"}
-            </Button>
-            <Button
-              onClick={handleDeclineInvitation}
-              disabled={loading}
-              variant="secondary"
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white"
-            >
-              {loading ? "Declining..." : "Decline"}
-            </Button>
-          </div>
-        )}
-
-        {status === "accepted" && (
-          <div className="text-center">
-            <p className="text-green-200 text-sm">🎉 You've joined this game! Check your dashboard to see it.</p>
-          </div>
-        )}
-
-        {status === "declined" && (
-          <div className="text-center">
-            <p className="text-red-200 text-sm">You declined this invitation.</p>
-          </div>
-        )}
+        <div className="flex space-x-2 pt-2">
+          <Button
+            onClick={handleAccept}
+            variant="primary"
+            size="sm"
+            disabled={acceptLoading || declineLoading || !!success}
+            className="flex-1"
+          >
+            {acceptLoading ? (
+              <div className="flex items-center justify-center space-x-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>Joining Game...</span>
+              </div>
+            ) : (
+              "✅ Accept & Join Game"
+            )}
+          </Button>
+          <Button
+            onClick={handleDecline}
+            variant="danger"
+            size="sm"
+            disabled={acceptLoading || declineLoading || !!success}
+            className="flex-1"
+          >
+            {declineLoading ? "Declining..." : "❌ Decline"}
+          </Button>
+        </div>
       </div>
     </Card>
   )
 }
+
+export default GameInvitationCard
