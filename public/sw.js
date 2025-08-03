@@ -1,6 +1,5 @@
-const CACHE_NAME = "poker-home-game-v52"
-const STATIC_CACHE = "poker-static-v52"
-const DYNAMIC_CACHE = "poker-dynamic-v52"
+const CACHE_NAME = "poker-manager-v1"
+const STATIC_CACHE = "poker-static-v1"
 
 // Files to cache immediately
 const STATIC_FILES = [
@@ -11,33 +10,30 @@ const STATIC_FILES = [
   "/images/poker-chips-background.jpg",
 ]
 
-// API endpoints that should use network-first strategy
-const API_ENDPOINTS = ["/api/", "supabase.co"]
-
 // Install event - cache static files
 self.addEventListener("install", (event) => {
-  console.log("🔧 Service Worker installing...")
+  console.log("Service Worker: Installing...")
 
   event.waitUntil(
     caches
       .open(STATIC_CACHE)
       .then((cache) => {
-        console.log("📦 Caching static files")
+        console.log("Service Worker: Caching static files")
         return cache.addAll(STATIC_FILES)
       })
       .then(() => {
-        console.log("✅ Static files cached successfully")
+        console.log("Service Worker: Static files cached")
         return self.skipWaiting()
       })
       .catch((error) => {
-        console.error("❌ Failed to cache static files:", error)
+        console.error("Service Worker: Cache failed", error)
       }),
   )
 })
 
 // Activate event - clean up old caches
 self.addEventListener("activate", (event) => {
-  console.log("🚀 Service Worker activating...")
+  console.log("Service Worker: Activating...")
 
   event.waitUntil(
     caches
@@ -45,99 +41,21 @@ self.addEventListener("activate", (event) => {
       .then((cacheNames) => {
         return Promise.all(
           cacheNames.map((cacheName) => {
-            if (cacheName !== STATIC_CACHE && cacheName !== DYNAMIC_CACHE) {
-              console.log("🗑️ Deleting old cache:", cacheName)
+            if (cacheName !== CACHE_NAME && cacheName !== STATIC_CACHE) {
+              console.log("Service Worker: Deleting old cache", cacheName)
               return caches.delete(cacheName)
             }
           }),
         )
       })
       .then(() => {
-        console.log("✅ Service Worker activated")
+        console.log("Service Worker: Activated")
         return self.clients.claim()
       }),
   )
 })
 
-// Test network connectivity
-async function testNetworkConnectivity() {
-  try {
-    const response = await fetch("/", {
-      method: "HEAD",
-      cache: "no-cache",
-    })
-    return response.ok
-  } catch (error) {
-    return false
-  }
-}
-
-// Network-first strategy for API calls
-async function networkFirstStrategy(request) {
-  try {
-    // Try network first
-    const networkResponse = await fetch(request.clone())
-
-    if (networkResponse.ok) {
-      // Cache successful responses
-      const cache = await caches.open(DYNAMIC_CACHE)
-      cache.put(request.clone(), networkResponse.clone())
-      return networkResponse
-    }
-
-    throw new Error("Network response not ok")
-  } catch (error) {
-    console.log("🔄 Network failed, trying cache for:", request.url)
-
-    // Fallback to cache
-    const cachedResponse = await caches.match(request)
-    if (cachedResponse) {
-      return cachedResponse
-    }
-
-    // If no cache, return a custom offline response for API calls
-    if (request.url.includes("/api/") || request.url.includes("supabase.co")) {
-      return new Response(
-        JSON.stringify({
-          error: "Offline",
-          message: "This request failed because you are offline",
-        }),
-        {
-          status: 503,
-          statusText: "Service Unavailable",
-          headers: { "Content-Type": "application/json" },
-        },
-      )
-    }
-
-    throw error
-  }
-}
-
-// Cache-first strategy for static assets
-async function cacheFirstStrategy(request) {
-  const cachedResponse = await caches.match(request)
-
-  if (cachedResponse) {
-    return cachedResponse
-  }
-
-  try {
-    const networkResponse = await fetch(request)
-
-    if (networkResponse.ok) {
-      const cache = await caches.open(STATIC_CACHE)
-      cache.put(request.clone(), networkResponse.clone())
-    }
-
-    return networkResponse
-  } catch (error) {
-    console.error("❌ Failed to fetch:", request.url, error)
-    throw error
-  }
-}
-
-// Fetch event - handle all requests
+// Fetch event - network first with cache fallback
 self.addEventListener("fetch", (event) => {
   const { request } = event
   const url = new URL(request.url)
@@ -147,92 +65,219 @@ self.addEventListener("fetch", (event) => {
     return
   }
 
-  // Skip chrome-extension requests
-  if (url.protocol === "chrome-extension:") {
+  // Skip chrome-extension and other non-http requests
+  if (!url.protocol.startsWith("http")) {
     return
   }
 
-  // Determine strategy based on request type
-  if (API_ENDPOINTS.some((endpoint) => request.url.includes(endpoint))) {
-    // Use network-first for API calls
-    event.respondWith(networkFirstStrategy(request))
-  } else if (STATIC_FILES.some((file) => request.url.endsWith(file))) {
-    // Use cache-first for static files
-    event.respondWith(cacheFirstStrategy(request))
-  } else {
-    // Default network-first with cache fallback
-    event.respondWith(networkFirstStrategy(request))
+  // Handle API requests (Supabase)
+  if (url.hostname.includes("supabase") || url.pathname.includes("/rest/v1/")) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          // Only cache successful responses
+          if (response.status === 200) {
+            const responseClone = response.clone()
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, responseClone)
+            })
+          }
+          return response
+        })
+        .catch(() => {
+          // Return cached version if network fails
+          return caches.match(request).then((cachedResponse) => {
+            if (cachedResponse) {
+              console.log("Service Worker: Serving cached API response")
+              return cachedResponse
+            }
+            // Return offline response for API calls
+            return new Response(
+              JSON.stringify({
+                error: "Network unavailable",
+                offline: true,
+              }),
+              {
+                status: 503,
+                statusText: "Service Unavailable",
+                headers: { "Content-Type": "application/json" },
+              },
+            )
+          })
+        }),
+    )
+    return
   }
+
+  // Handle static files and pages
+  event.respondWith(
+    caches.match(request).then((cachedResponse) => {
+      if (cachedResponse) {
+        // Serve from cache, but also fetch in background to update cache
+        fetch(request)
+          .then((response) => {
+            if (response.status === 200) {
+              const responseClone = response.clone()
+              caches.open(STATIC_CACHE).then((cache) => {
+                cache.put(request, responseClone)
+              })
+            }
+          })
+          .catch(() => {
+            // Ignore background fetch errors
+          })
+
+        return cachedResponse
+      }
+
+      // Not in cache, fetch from network
+      return fetch(request)
+        .then((response) => {
+          // Cache successful responses
+          if (response.status === 200) {
+            const responseClone = response.clone()
+            caches.open(STATIC_CACHE).then((cache) => {
+              cache.put(request, responseClone)
+            })
+          }
+          return response
+        })
+        .catch(() => {
+          // Network failed and not in cache
+          if (request.destination === "document") {
+            // Return offline page for navigation requests
+            return new Response(
+              `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                  <title>Offline - Poker Manager</title>
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <style>
+                    body { 
+                      font-family: system-ui, sans-serif; 
+                      text-align: center; 
+                      padding: 2rem;
+                      background: #1a1a1a;
+                      color: #fff;
+                    }
+                    .offline-message {
+                      max-width: 400px;
+                      margin: 0 auto;
+                      padding: 2rem;
+                      background: #2a2a2a;
+                      border-radius: 8px;
+                    }
+                    button {
+                      background: #3b82f6;
+                      color: white;
+                      border: none;
+                      padding: 0.75rem 1.5rem;
+                      border-radius: 6px;
+                      cursor: pointer;
+                      margin-top: 1rem;
+                    }
+                    button:hover { background: #2563eb; }
+                  </style>
+                </head>
+                <body>
+                  <div class="offline-message">
+                    <h1>📵 You're Offline</h1>
+                    <p>Please check your internet connection and try again.</p>
+                    <button onclick="window.location.reload()">Retry</button>
+                  </div>
+                </body>
+                </html>
+                `,
+              {
+                status: 503,
+                statusText: "Service Unavailable",
+                headers: { "Content-Type": "text/html" },
+              },
+            )
+          }
+
+          // For other requests, return a generic error
+          return new Response("Network error", {
+            status: 503,
+            statusText: "Service Unavailable",
+          })
+        })
+    }),
+  )
 })
 
 // Background sync for offline actions
 self.addEventListener("sync", (event) => {
-  console.log("🔄 Background sync triggered:", event.tag)
+  console.log("Service Worker: Background sync triggered", event.tag)
 
   if (event.tag === "background-sync") {
     event.waitUntil(
-      // Notify clients that sync is happening
-      self.clients
-        .matchAll()
-        .then((clients) => {
-          clients.forEach((client) => {
-            client.postMessage({
-              type: "BACKGROUND_SYNC",
-              payload: { status: "syncing" },
-            })
-          })
-        }),
+      // Attempt to sync any pending actions
+      syncPendingActions(),
     )
   }
 })
 
-// Handle messages from the main thread
-self.addEventListener("message", (event) => {
-  const { type, payload } = event.data
+// Handle push notifications (for future use)
+self.addEventListener("push", (event) => {
+  console.log("Service Worker: Push received")
 
-  switch (type) {
-    case "SKIP_WAITING":
-      self.skipWaiting()
-      break
-
-    case "TEST_CONNECTION":
-      testNetworkConnectivity().then((isOnline) => {
-        event.ports[0].postMessage({ isOnline })
-      })
-      break
-
-    case "CLEAR_CACHE":
-      caches
-        .keys()
-        .then((cacheNames) => {
-          return Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)))
-        })
-        .then(() => {
-          event.ports[0].postMessage({ success: true })
-        })
-      break
-
-    default:
-      console.log("Unknown message type:", type)
+  const options = {
+    body: event.data ? event.data.text() : "New poker game update!",
+    icon: "/images/icon-192x192.png",
+    badge: "/images/icon-72x72.png",
+    vibrate: [100, 50, 100],
+    data: {
+      dateOfArrival: Date.now(),
+      primaryKey: 1,
+    },
   }
+
+  event.waitUntil(self.registration.showNotification("Poker Manager", options))
 })
 
-// Periodic cleanup of old cache entries
+// Sync pending actions when connection is restored
+async function syncPendingActions() {
+  try {
+    // Check if we can reach the server
+    const response = await fetch("/api/health-check")
+
+    if (response.ok) {
+      console.log("Service Worker: Connection restored, syncing...")
+
+      // Notify all clients that connection is restored
+      const clients = await self.clients.matchAll()
+      clients.forEach((client) => {
+        client.postMessage({
+          type: "CONNECTION_RESTORED",
+          timestamp: Date.now(),
+        })
+      })
+    }
+  } catch (error) {
+    console.log("Service Worker: Still offline, will retry sync later")
+  }
+}
+
+// Clean up old cache entries periodically
 setInterval(
   () => {
-    caches.open(DYNAMIC_CACHE).then((cache) => {
+    caches.open(CACHE_NAME).then((cache) => {
       cache.keys().then((requests) => {
-        // Remove entries older than 24 hours
-        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000
-
         requests.forEach((request) => {
           cache.match(request).then((response) => {
             if (response) {
               const dateHeader = response.headers.get("date")
               if (dateHeader) {
-                const responseDate = new Date(dateHeader).getTime()
-                if (responseDate < oneDayAgo) {
+                const responseDate = new Date(dateHeader)
+                const now = new Date()
+                const daysDiff = (now.getTime() - responseDate.getTime()) / (1000 * 60 * 60 * 24)
+
+                // Remove entries older than 7 days
+                if (daysDiff > 7) {
                   cache.delete(request)
+                  console.log("Service Worker: Removed old cache entry", request.url)
                 }
               }
             }
@@ -241,7 +286,5 @@ setInterval(
       })
     })
   },
-  60 * 60 * 1000,
-) // Run every hour
-
-console.log("🎮 Poker Home Game Service Worker loaded")
+  24 * 60 * 60 * 1000,
+) // Run daily

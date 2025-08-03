@@ -20,7 +20,11 @@ ON public.profiles(games_played) WHERE games_played > 0;
 
 -- Index for leaderboards (profit/loss sorting)
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_profiles_profit_loss 
-ON public.profiles(all_time_profit_loss DESC);
+ON public.profiles(all_time_profit_loss DESC) WHERE all_time_profit_loss IS NOT NULL;
+
+-- Index for last game date sorting
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_profiles_last_game_date 
+ON public.profiles(last_game_date DESC) WHERE last_game_date IS NOT NULL;
 
 -- 2. GAME_SESSIONS TABLE INDEXES
 -- Index for user's games
@@ -38,6 +42,10 @@ ON public.game_sessions(user_id, status);
 -- Index for chronological ordering
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_game_sessions_created_at 
 ON public.game_sessions(created_at DESC);
+
+-- Index for game start time ordering
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_game_sessions_start_time 
+ON public.game_sessions(start_time DESC);
 
 -- Index for completed games
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_game_sessions_end_time 
@@ -178,3 +186,12 @@ FROM pg_stat_user_indexes
 WHERE schemaname = 'public'
     AND indexname LIKE 'idx_%'
 ORDER BY idx_tup_read DESC;
+
+-- Display table sizes
+SELECT 
+    schemaname,
+    tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
+FROM pg_tables 
+WHERE tablename IN ('game_sessions', 'friendships', 'friend_requests', 'game_invitations', 'profiles')
+ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
