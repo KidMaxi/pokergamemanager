@@ -1,38 +1,73 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useEffect, useState } from "react"
-import type { User, Session, AuthError } from "@supabase/supabase-js"
-import { supabase } from "../lib/supabase"
-import type { Database } from "../lib/database.types"
 
-type Profile = Database["public"]["Tables"]["profiles"]["Row"]
+import { createContext, useContext, useEffect, useState } from "react"
+import type { User } from "@supabase/supabase-js"
+import { supabase } from "../lib/supabase"
 
 interface AuthContextType {
   user: User | null
-  profile: Profile | null
-  session: Session | null
   loading: boolean
   emailVerified: boolean
-  signUp: (email: string, password: string, fullName: string) => Promise<{ error: AuthError | null }>
-  signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>
-  signOut: () => Promise<{ error: AuthError | null }>
-  updateProfile: (updates: Partial<Profile>) => Promise<{ error: Error | null }>
+  profile: any | null
   refreshProfile: () => Promise<void>
-  resendVerification: () => Promise<{ error: AuthError | null }>
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  loading: true,
+  emailVerified: false,
+  profile: null,
+  refreshProfile: async () => {},
+})
+
+export const useAuth = () => {
+  const context = useContext(AuthContext)
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider")
+  }
+  return context
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [emailVerified, setEmailVerified] = useState(false)
+  const [profile, setProfile] = useState<any | null>(null)
+
+  const refreshProfile = async () => {
+    if (!user) {
+      console.log("No user available for profile refresh")
+      return
+    }
+
+    try {
+      console.log("🔄 Refreshing profile data for user:", user.id)
+
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).single()
+
+      if (error) {
+        console.error("❌ Error refreshing profile:", error)
+        return
+      }
+
+      console.log("✅ Profile refresh completed:", {
+        games_played: data.games_played,
+        all_time_profit_loss: data.all_time_profit_loss,
+        last_game_date: data.last_game_date,
+      })
+
+      setProfile(data)
+    } catch (error) {
+      console.error("❌ Exception during profile refresh:", error)
+    }
+  }
 
   const fetchProfile = async (userId: string) => {
     try {
+      console.log("📋 Fetching initial profile for user:", userId)
+
       const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
 
       if (error) {
@@ -40,46 +75,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return null
       }
 
+      console.log("✅ Initial profile loaded:", {
+        full_name: data.full_name,
+        games_played: data.games_played,
+        all_time_profit_loss: data.all_time_profit_loss,
+      })
+
       return data
     } catch (error) {
-      console.error("Error fetching profile:", error)
+      console.error("Exception fetching profile:", error)
       return null
-    }
-  }
-
-  const refreshProfile = async () => {
-    if (user) {
-      const profileData = await fetchProfile(user.id)
-      setProfile(profileData)
     }
   }
 
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      setEmailVerified(session?.user?.email_confirmed_at ? true : false)
+    const getInitialSession = async () => {
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession()
 
-      if (session?.user && session.user.email_confirmed_at) {
-        fetchProfile(session.user.id).then(setProfile)
+        if (error) {
+          console.error("Error getting session:", error)
+          setLoading(false)
+          return
+        }
+
+        if (session?.user) {
+          setUser(session.user)
+          setEmailVerified(session.user.email_confirmed_at !== null)
+
+          // Fetch profile data
+          const profileData = await fetchProfile(session.user.id)
+          setProfile(profileData)
+        }
+
+        setLoading(false)
+      } catch (error) {
+        console.error("Error in getInitialSession:", error)
+        setLoading(false)
       }
+    }
 
-      setLoading(false)
-    })
+    getInitialSession()
 
     // Listen for auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      setEmailVerified(session?.user?.email_confirmed_at ? true : false)
+      console.log("Auth state changed:", event, session?.user?.id)
 
-      if (session?.user && session.user.email_confirmed_at) {
+      if (session?.user) {
+        setUser(session.user)
+        setEmailVerified(session.user.email_confirmed_at !== null)
+
+        // Fetch profile data for new session
         const profileData = await fetchProfile(session.user.id)
         setProfile(profileData)
       } else {
+        setUser(null)
+        setEmailVerified(false)
         setProfile(null)
       }
 
@@ -89,155 +146,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  const signUp = async (email: string, password: string, fullName: string) => {
-    try {
-      console.log("🔄 Starting user signup process...")
+  // Add automatic reconnection handling for network recovery and session refresh
+  useEffect(() => {
+    if (!user) return
 
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-          },
-        },
-      })
+    const handleNetworkReconnect = async () => {
+      try {
+        console.log("🌐 Network reconnected, refreshing auth session...")
 
-      if (error) {
-        console.error("❌ Signup error:", error)
-        return { error }
+        // Refresh auth session silently
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession()
+
+        if (error) {
+          console.error("Error refreshing session on reconnect:", error)
+          return
+        }
+
+        if (session?.user) {
+          console.log("✅ Session refreshed successfully on reconnect")
+          // Refresh profile data
+          const profileData = await fetchProfile(session.user.id)
+          setProfile(profileData)
+        }
+      } catch (error) {
+        console.error("Error handling network reconnect:", error)
       }
+    }
 
-      console.log("✅ User signup successful:", data.user?.id)
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === "visible" && user) {
+        try {
+          console.log("👁️ App became visible, checking session health...")
 
-      // The profile should be created automatically by the database trigger
-      // But let's add a small delay and check if it was created
-      if (data.user) {
-        setTimeout(async () => {
-          try {
-            const profile = await fetchProfile(data.user!.id)
-            if (!profile) {
-              console.log("⚠️ Profile not found after signup, creating manually...")
+          // Check if session is still valid
+          const {
+            data: { session },
+            error,
+          } = await supabase.auth.getSession()
 
-              // Manually create profile if trigger didn't work
-              const { error: profileError } = await supabase.from("profiles").insert({
-                id: data.user!.id,
-                full_name: fullName,
-                email: email,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                is_admin: false,
-                preferences: {},
-                all_time_profit_loss: 0,
-                games_played: 0,
-                last_game_date: null,
-              })
-
-              if (profileError) {
-                console.error("❌ Manual profile creation failed:", profileError)
-              } else {
-                console.log("✅ Profile created manually")
-              }
-            } else {
-              console.log("✅ Profile found after signup")
-            }
-          } catch (error) {
-            console.error("❌ Error checking/creating profile:", error)
+          if (error || !session) {
+            console.log("⚠️ Session invalid on visibility change")
+            return
           }
-        }, 1000)
+
+          // Refresh profile to ensure data is current
+          await refreshProfile()
+        } catch (error) {
+          console.error("Error handling visibility change:", error)
+        }
       }
-
-      return { error: null }
-    } catch (error) {
-      console.error("❌ Signup exception:", error)
-      return { error: error as AuthError }
     }
-  }
 
-  const signIn = async (email: string, password: string) => {
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
+    // Listen for network reconnection
+    window.addEventListener("online", handleNetworkReconnect)
 
-      return { error }
-    } catch (error) {
-      return { error: error as AuthError }
+    // Listen for app becoming visible (tab switch, mobile app foreground)
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener("online", handleNetworkReconnect)
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
-  }
-
-  const signOut = async () => {
-    try {
-      // Clear local state immediately
-      setUser(null)
-      setProfile(null)
-      setSession(null)
-      setEmailVerified(false)
-
-      const { error } = await supabase.auth.signOut()
-      return { error }
-    } catch (error) {
-      return { error: error as AuthError }
-    }
-  }
-
-  const updateProfile = async (updates: Partial<Profile>) => {
-    try {
-      if (!user) {
-        return { error: new Error("No user logged in") }
-      }
-
-      const { error } = await supabase.from("profiles").update(updates).eq("id", user.id)
-
-      if (!error) {
-        await refreshProfile()
-      }
-
-      return { error }
-    } catch (error) {
-      return { error: error as Error }
-    }
-  }
-
-  const resendVerification = async () => {
-    try {
-      if (!user?.email) {
-        return { error: new Error("No user email found") as AuthError }
-      }
-
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: user.email,
-      })
-
-      return { error }
-    } catch (error) {
-      return { error: error as AuthError }
-    }
-  }
+  }, [user])
 
   const value = {
     user,
-    profile,
-    session,
     loading,
     emailVerified,
-    signUp,
-    signIn,
-    signOut,
-    updateProfile,
+    profile,
     refreshProfile,
-    resendVerification,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
-  return context
 }

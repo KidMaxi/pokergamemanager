@@ -28,7 +28,7 @@ import InvitationDiagnostics from "../components/debug/InvitationDiagnostics"
 import GameInviteSystemAnalysis from "../components/analysis/GameInviteSystemAnalysis"
 
 export default function Home() {
-  const { user, loading: authLoading, emailVerified } = useAuth()
+  const { user, loading: authLoading, emailVerified, refreshProfile } = useAuth()
   const [players, setPlayers] = useState<Player[]>([])
   const [gameSessions, setGameSessions] = useState<GameSession[]>([])
   const [currentView, setCurrentView] = useState<View>("dashboard")
@@ -42,6 +42,94 @@ export default function Home() {
   const [showSystemAnalysis, setShowSystemAnalysis] = useState(false)
 
   usePWA()
+
+  // Add connection recovery hook for handling idle/background app issues
+  const useConnectionRecovery = () => {
+    useEffect(() => {
+      if (!user) return
+
+      const handleVisibilityChange = async () => {
+        if (document.visibilityState === "visible") {
+          try {
+            console.log("👁️ App became visible, checking connection health...")
+
+            // Test database connection
+            const isConnected = await checkConnection()
+
+            if (!isConnected) {
+              console.log("🔄 Connection lost, attempting recovery...")
+              setLoading(true)
+
+              // Attempt to reload user data
+              try {
+                await loadUserData()
+                console.log("✅ Data recovery successful")
+              } catch (error) {
+                console.error("❌ Data recovery failed:", error)
+                // Try to load from local storage as fallback
+                if (gameStateSync.forceSync) {
+                  gameStateSync.forceSync()
+                }
+              } finally {
+                setLoading(false)
+              }
+            } else {
+              console.log("✅ Connection healthy")
+            }
+          } catch (error) {
+            console.error("Error during connection recovery:", error)
+          }
+        }
+      }
+
+      const handleNetworkReconnect = async () => {
+        if (user) {
+          try {
+            console.log("🌐 Network reconnected, refreshing app data...")
+            setLoading(true)
+            await loadUserData()
+            console.log("✅ App data refreshed after reconnect")
+          } catch (error) {
+            console.error("❌ Error refreshing data on reconnect:", error)
+          } finally {
+            setLoading(false)
+          }
+        }
+      }
+
+      // Add periodic health check for long-running sessions
+      const healthCheckInterval = setInterval(async () => {
+        // Only run health checks when app is visible and user is active
+        if (document.visibilityState === "visible" && user) {
+          try {
+            const isHealthy = await checkConnection()
+            if (!isHealthy) {
+              console.log("⚠️ Periodic health check failed, connection may be stale")
+              // Don't automatically reload here, just log for awareness
+              // User will get recovery on next visibility change
+            }
+          } catch (error) {
+            console.log("Health check error (non-critical):", error)
+          }
+        }
+      }, 120000) // Check every 2 minutes
+
+      // Listen for app visibility changes (tab switch, mobile background/foreground)
+      document.addEventListener("visibilitychange", handleVisibilityChange)
+
+      // Listen for network reconnection
+      window.addEventListener("online", handleNetworkReconnect)
+
+      return () => {
+        document.removeEventListener("visibilitychange", handleVisibilityChange)
+        window.removeEventListener("online", handleNetworkReconnect)
+        clearInterval(healthCheckInterval)
+      }
+    }, [user, loading])
+  }
+
+  // Call the connection recovery hook
+  useConnectionRecovery()
 
   // Use game state sync hook for better refresh handling
   const gameStateSync = useGameStateSync({
@@ -424,37 +512,47 @@ export default function Home() {
             const totalBuyIn = userPlayer.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
             const profitLoss = userPlayer.cashOutAmount - totalBuyIn
 
-            console.log(`Updating stats for ${participantProfile.full_name}:`, {
+            console.log(`📈 Updating stats for ${participantProfile.full_name}:`, {
               userId: participantProfile.id,
               totalBuyIn,
               cashOut: userPlayer.cashOutAmount,
               profitLoss,
             })
 
-            // Call the corrected database function with proper UUID parameter
+            // Call the database function with proper UUID parameter - using the EXACT function signature
             const { data, error } = await supabase.rpc("update_user_game_stats", {
-              user_id_param: participantProfile.id, // This is already a UUID from the database
+              user_id_param: participantProfile.id,
               profit_loss_amount: profitLoss,
             })
 
             if (error) {
-              console.error(`Error updating stats for user ${participantProfile.id}:`, error)
+              console.error(`❌ Error updating stats for user ${participantProfile.id}:`, error)
+              console.error("Full error details:", {
+                message: error.message,
+                details: error.details,
+                hint: error.hint,
+                code: error.code,
+              })
               // Continue with other users even if one fails
             } else {
-              console.log(`✅ Successfully updated stats for ${participantProfile.full_name}: P/L ${profitLoss}`)
+              console.log(`✅ Successfully updated stats for ${participantProfile.full_name}:`, data)
             }
           } else {
-            console.log(`No matching player found for profile ${participantProfile.full_name} in game data`)
+            console.log(`⚠️ No matching player found for profile ${participantProfile.full_name} in game data`)
           }
         } catch (error) {
-          console.error(`Error processing stats for user ${participantProfile.id}:`, error)
+          console.error(`❌ Error processing stats for user ${participantProfile.id}:`, error)
           // Continue with other users
         }
       }
 
-      console.log("✅ User stats update completed")
+      // Force refresh the current user's profile data to show updated stats immediately
+      console.log("🔄 Refreshing profile data after stats update...")
+      await refreshProfile()
+
+      console.log("✅ User stats update completed successfully")
     } catch (error) {
-      console.error("Error updating user stats:", error)
+      console.error("❌ Error updating user stats:", error)
       // Don't throw the error - stats update failure shouldn't prevent game completion
     }
   }
@@ -574,19 +672,33 @@ export default function Home() {
     }
 
     try {
+      console.log("🎯 Ending game and updating database...")
+
+      // First update the game session in database
       await updateGameSessionInDatabase(completedSession)
+      console.log("✅ Game session updated in database")
 
-      // Update stats for all participants (host + invited users)
+      // Then update stats for all participants (host + invited users)
+      console.log("📊 Starting stats update for all participants...")
       await updateUserStatsAfterGameCompletion(completedSession)
+      console.log("✅ Stats update completed")
 
+      // Update local state
       setGameSessions((prevSessions) => {
         return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
       })
+
+      console.log("🎉 Game completion process finished successfully")
     } catch (error) {
-      console.error("Error ending game:", error)
+      console.error("❌ Error ending game:", error)
+
+      // Still update local state even if database operations fail
       setGameSessions((prevSessions) => {
         return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
       })
+
+      // Show user a warning
+      alert("Game ended locally but there may have been issues saving to the database. Please check your connection.")
     }
   }
 
@@ -789,7 +901,7 @@ export default function Home() {
       {/* Only show footer if user is verified */}
       {user && emailVerified && (
         <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
-          Poker Homegame Manager V51 &copy; {new Date().getFullYear()}
+          Poker Homegame Manager V56 &copy; {new Date().getFullYear()}
           {process.env.NODE_ENV === "development" && (
             <div className="mt-2 space-x-4">
               <button
