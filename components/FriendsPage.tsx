@@ -316,232 +316,240 @@ const FriendsPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
-          <p className="text-text-secondary">Loading friends...</p>
+      <div className="min-h-screen default-background">
+        <div className="container mx-auto px-4 py-8">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
+            <p className="text-text-secondary">Loading friends...</p>
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-text-primary">Friends</h1>
-          <Button onClick={() => setShowAddFriendModal(true)} variant="primary" className="flex items-center space-x-2">
-            <span>+</span>
-            <span>Add Friend</span>
-          </Button>
-        </div>
-
-        {/* Status Messages */}
-        {error && (
-          <div className="mb-4 p-3 bg-red-900/20 border border-red-800 rounded-lg text-red-400 text-sm flex justify-between items-center">
-            <span>{error}</span>
-            <Button onClick={handleRetry} variant="ghost" size="sm" className="text-red-400 hover:text-red-300">
-              Retry
+    <div className="min-h-screen default-background">
+      <div className="container mx-auto px-4 py-8">
+        <div className="max-w-4xl mx-auto">
+          {/* Header */}
+          <div className="flex justify-between items-center mb-6">
+            <h1 className="text-3xl font-bold text-text-primary">Friends</h1>
+            <Button
+              onClick={() => setShowAddFriendModal(true)}
+              variant="primary"
+              className="flex items-center space-x-2"
+            >
+              <span>+</span>
+              <span>Add Friend</span>
             </Button>
           </div>
-        )}
-        {success && (
-          <div className="mb-4 p-3 bg-green-900/20 border border-green-800 rounded-lg text-green-400 text-sm">
-            {success}
-          </div>
-        )}
 
-        {/* Tabs */}
-        <div className="flex space-x-1 mb-6 bg-surface-input rounded-lg p-1">
-          <button
-            onClick={() => setActiveTab("friends")}
-            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-              activeTab === "friends" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            Friends ({friends.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("received")}
-            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-              activeTab === "received" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            Requests ({receivedRequests.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("sent")}
-            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-              activeTab === "sent" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            Sent ({sentRequests.length})
-          </button>
-        </div>
-
-        {/* Tab Content */}
-        {activeTab === "friends" && (
-          <div className="space-y-4">
-            {friends.length === 0 ? (
-              <Card className="text-center py-8">
-                <p className="text-text-secondary mb-4">No friends yet</p>
-                <Button onClick={() => setShowAddFriendModal(true)} variant="primary">
-                  Add Your First Friend
-                </Button>
-              </Card>
-            ) : (
-              friends.map((friendship) => (
-                <Card key={friendship.id} className="p-4">
-                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
-                        {friendship.friend_profile?.full_name?.charAt(0) ||
-                          friendship.friend_profile?.email?.charAt(0).toUpperCase() ||
-                          "?"}
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-text-primary">
-                          {friendship.friend_profile?.full_name || "Unknown User"}
-                        </h3>
-                        <p className="text-text-secondary text-sm">{friendship.friend_profile?.email}</p>
-                        <div className="flex flex-wrap gap-x-4 mt-1 text-xs text-text-secondary">
-                          <span>
-                            P/L:{" "}
-                            <span
-                              className={
-                                (friendship.friend_profile?.all_time_profit_loss || 0) >= 0
-                                  ? "text-green-400"
-                                  : "text-red-400"
-                              }
-                            >
-                              {formatCurrency(friendship.friend_profile?.all_time_profit_loss || 0)}
-                            </span>
-                          </span>
-                          <span>Games: {friendship.friend_profile?.games_played || 0}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex justify-end">
-                      <Button onClick={() => handleRemoveFriend(friendship.friend_id)} variant="danger" size="sm">
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))
-            )}
-          </div>
-        )}
-
-        {activeTab === "received" && (
-          <div className="space-y-4">
-            {receivedRequests.length === 0 ? (
-              <Card className="text-center py-8">
-                <p className="text-text-secondary">No pending friend requests</p>
-              </Card>
-            ) : (
-              receivedRequests.map((request) => (
-                <Card key={request.id} className="p-4">
-                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
-                        {request.sender_profile?.full_name?.charAt(0) ||
-                          request.sender_profile?.email?.charAt(0).toUpperCase() ||
-                          "?"}
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-text-primary">
-                          {request.sender_profile?.full_name || "Unknown User"}
-                        </h3>
-                        <p className="text-text-secondary text-sm">{request.sender_profile?.email}</p>
-                        <p className="text-xs text-text-secondary">Sent {formatDate(request.created_at, false)}</p>
-                      </div>
-                    </div>
-                    <div className="flex space-x-2">
-                      <Button onClick={() => handleAcceptRequest(request.id)} variant="primary" size="sm">
-                        Accept
-                      </Button>
-                      <Button onClick={() => handleDeclineRequest(request.id)} variant="danger" size="sm">
-                        Decline
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))
-            )}
-          </div>
-        )}
-
-        {activeTab === "sent" && (
-          <div className="space-y-4">
-            {sentRequests.length === 0 ? (
-              <Card className="text-center py-8">
-                <p className="text-text-secondary">No pending sent requests</p>
-              </Card>
-            ) : (
-              sentRequests.map((request) => (
-                <Card key={request.id} className="p-4">
-                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-12 h-12 bg-gray-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
-                        {request.receiver_profile?.full_name?.charAt(0) ||
-                          request.receiver_profile?.email?.charAt(0).toUpperCase() ||
-                          "?"}
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-text-primary">
-                          {request.receiver_profile?.full_name || "Unknown User"}
-                        </h3>
-                        <p className="text-text-secondary text-sm">{request.receiver_profile?.email}</p>
-                        <p className="text-xs text-text-secondary">Sent {formatDate(request.created_at, false)}</p>
-                      </div>
-                    </div>
-                    <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
-                      <span className="text-xs text-yellow-400 bg-yellow-900/20 px-2 py-1 rounded">Pending</span>
-                      <Button onClick={() => handleCancelRequest(request.id)} variant="ghost" size="sm">
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* Add Friend Modal */}
-        <Modal
-          isOpen={showAddFriendModal}
-          onClose={() => {
-            setShowAddFriendModal(false)
-            setFriendEmail("")
-            setError("")
-            setSuccess("")
-          }}
-          title="Add Friend"
-        >
-          <form onSubmit={handleSendFriendRequest} className="space-y-4">
-            <Input
-              label="Friend's Email"
-              id="friendEmail"
-              type="email"
-              value={friendEmail}
-              onChange={(e) => setFriendEmail(e.target.value)}
-              placeholder="Enter their email address"
-              required
-            />
-
-            <div className="flex justify-end space-x-2">
-              <Button type="button" onClick={() => setShowAddFriendModal(false)} variant="ghost">
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" disabled={addFriendLoading || !friendEmail.trim()}>
-                {addFriendLoading ? "Sending..." : "Send Request"}
+          {/* Status Messages */}
+          {error && (
+            <div className="mb-4 p-3 bg-red-900/20 border border-red-800 rounded-lg text-red-400 text-sm flex justify-between items-center">
+              <span>{error}</span>
+              <Button onClick={handleRetry} variant="ghost" size="sm" className="text-red-400 hover:text-red-300">
+                Retry
               </Button>
             </div>
-          </form>
-        </Modal>
+          )}
+          {success && (
+            <div className="mb-4 p-3 bg-green-900/20 border border-green-800 rounded-lg text-green-400 text-sm">
+              {success}
+            </div>
+          )}
+
+          {/* Tabs */}
+          <div className="flex space-x-1 mb-6 bg-surface-input rounded-lg p-1">
+            <button
+              onClick={() => setActiveTab("friends")}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+                activeTab === "friends" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              Friends ({friends.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("received")}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+                activeTab === "received" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              Requests ({receivedRequests.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("sent")}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+                activeTab === "sent" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              Sent ({sentRequests.length})
+            </button>
+          </div>
+
+          {/* Tab Content */}
+          {activeTab === "friends" && (
+            <div className="space-y-4">
+              {friends.length === 0 ? (
+                <Card className="text-center py-8">
+                  <p className="text-text-secondary mb-4">No friends yet</p>
+                  <Button onClick={() => setShowAddFriendModal(true)} variant="primary">
+                    Add Your First Friend
+                  </Button>
+                </Card>
+              ) : (
+                friends.map((friendship) => (
+                  <Card key={friendship.id} className="p-4">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
+                      <div className="flex items-center space-x-4">
+                        <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
+                          {friendship.friend_profile?.full_name?.charAt(0) ||
+                            friendship.friend_profile?.email?.charAt(0).toUpperCase() ||
+                            "?"}
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-text-primary">
+                            {friendship.friend_profile?.full_name || "Unknown User"}
+                          </h3>
+                          <p className="text-text-secondary text-sm">{friendship.friend_profile?.email}</p>
+                          <div className="flex flex-wrap gap-x-4 mt-1 text-xs text-text-secondary">
+                            <span>
+                              P/L:{" "}
+                              <span
+                                className={
+                                  (friendship.friend_profile?.all_time_profit_loss || 0) >= 0
+                                    ? "text-green-400"
+                                    : "text-red-400"
+                                }
+                              >
+                                {formatCurrency(friendship.friend_profile?.all_time_profit_loss || 0)}
+                              </span>
+                            </span>
+                            <span>Games: {friendship.friend_profile?.games_played || 0}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex justify-end">
+                        <Button onClick={() => handleRemoveFriend(friendship.friend_id)} variant="danger" size="sm">
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === "received" && (
+            <div className="space-y-4">
+              {receivedRequests.length === 0 ? (
+                <Card className="text-center py-8">
+                  <p className="text-text-secondary">No pending friend requests</p>
+                </Card>
+              ) : (
+                receivedRequests.map((request) => (
+                  <Card key={request.id} className="p-4">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
+                      <div className="flex items-center space-x-4">
+                        <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
+                          {request.sender_profile?.full_name?.charAt(0) ||
+                            request.sender_profile?.email?.charAt(0).toUpperCase() ||
+                            "?"}
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-text-primary">
+                            {request.sender_profile?.full_name || "Unknown User"}
+                          </h3>
+                          <p className="text-text-secondary text-sm">{request.sender_profile?.email}</p>
+                          <p className="text-xs text-text-secondary">Sent {formatDate(request.created_at, false)}</p>
+                        </div>
+                      </div>
+                      <div className="flex space-x-2">
+                        <Button onClick={() => handleAcceptRequest(request.id)} variant="primary" size="sm">
+                          Accept
+                        </Button>
+                        <Button onClick={() => handleDeclineRequest(request.id)} variant="danger" size="sm">
+                          Decline
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === "sent" && (
+            <div className="space-y-4">
+              {sentRequests.length === 0 ? (
+                <Card className="text-center py-8">
+                  <p className="text-text-secondary">No pending sent requests</p>
+                </Card>
+              ) : (
+                sentRequests.map((request) => (
+                  <Card key={request.id} className="p-4">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
+                      <div className="flex items-center space-x-4">
+                        <div className="w-12 h-12 bg-gray-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                          {request.receiver_profile?.full_name?.charAt(0) ||
+                            request.receiver_profile?.email?.charAt(0).toUpperCase() ||
+                            "?"}
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-text-primary">
+                            {request.receiver_profile?.full_name || "Unknown User"}
+                          </h3>
+                          <p className="text-text-secondary text-sm">{request.receiver_profile?.email}</p>
+                          <p className="text-xs text-text-secondary">Sent {formatDate(request.created_at, false)}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
+                        <span className="text-xs text-yellow-400 bg-yellow-900/20 px-2 py-1 rounded">Pending</span>
+                        <Button onClick={() => handleCancelRequest(request.id)} variant="ghost" size="sm">
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Add Friend Modal */}
+          <Modal
+            isOpen={showAddFriendModal}
+            onClose={() => {
+              setShowAddFriendModal(false)
+              setFriendEmail("")
+              setError("")
+              setSuccess("")
+            }}
+            title="Add Friend"
+          >
+            <form onSubmit={handleSendFriendRequest} className="space-y-4">
+              <Input
+                label="Friend's Email"
+                id="friendEmail"
+                type="email"
+                value={friendEmail}
+                onChange={(e) => setFriendEmail(e.target.value)}
+                placeholder="Enter their email address"
+                required
+              />
+
+              <div className="flex justify-end space-x-2">
+                <Button type="button" onClick={() => setShowAddFriendModal(false)} variant="ghost">
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={addFriendLoading || !friendEmail.trim()}>
+                  {addFriendLoading ? "Sending..." : "Send Request"}
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        </div>
       </div>
     </div>
   )
