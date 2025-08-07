@@ -59,57 +59,72 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
     if (session.status === "completed" && session.endTime) {
       const totalDuration = calculateDuration(session.startTime, session.endTime)
       return (
-        <p className="text-sm text-text-secondary">
-          Total Time Played: <span className="font-mono">{formatDurationCompact(totalDuration)}</span>
-        </p>
+        <div className="flex items-center space-x-2 text-sm text-text-secondary">
+          <span>Total Time:</span>
+          <span className="font-mono text-brand-primary">{formatDurationCompact(totalDuration)}</span>
+        </div>
       )
     } else if (session.status === "active" || session.status === "pending_close") {
       return (
-        <p className="text-sm text-text-secondary">
-          Time Played: <LiveTimer startTime={session.startTime} className="text-green-400" />
-        </p>
+        <div className="flex items-center space-x-2 text-sm text-text-secondary">
+          <span>Time Played:</span>
+          <LiveTimer startTime={session.startTime} className="text-green-400 font-mono" />
+        </div>
       )
     }
     return null
   }
 
   return (
-    <Card className="mb-3 sm:mb-4 hover:shadow-xl transition-shadow">
-      <div className="space-y-3">
+    <Card className="mb-4 hover:shadow-lg transition-all duration-200">
+      <div className="space-y-4">
         <div className="flex justify-between items-start">
-          <div className="flex-1 min-w-0 pr-3">
-            <div className="flex items-center space-x-2">
-              <h4 className="text-base sm:text-lg font-semibold text-brand-primary truncate">{session.name}</h4>
+          <div className="flex-1 min-w-0 pr-4">
+            <div className="flex items-center space-x-3 mb-2">
+              <h4 className="text-lg sm:text-xl font-semibold text-brand-primary truncate">{session.name}</h4>
               {session.isOwner === false && (
-                <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded">Invited</span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+                  Invited
+                </span>
               )}
             </div>
-            <div className="space-y-1 text-xs sm:text-sm text-text-secondary">
-              <p>Started: {formatDate(session.startTime, false)}</p>
-              <p>
-                Status:{" "}
-                <span className={`font-semibold ${getStatusColor(session.status)}`}>
-                  {getStatusText(session.status)}
-                </span>
-              </p>
-              {renderTimePlayed()}
-              <p>Rate: {formatCurrency(session.pointToCashRate)}/pt</p>
-              <p>Players: {session.playersInGame.length}</p>
-              <p>
-                Buy-ins: {formatCurrency(totalBuyInsCash)} ({totalBuyInEntries})
-              </p>
-              {session.invitedUsers && session.invitedUsers.length > 0 && (
-                <p className="text-blue-400">Invited Users: {session.invitedUsers.length}</p>
-              )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+              <div className="space-y-1">
+                <p className="text-text-secondary">
+                  <span className="font-medium">Started:</span> {formatDate(session.startTime, false)}
+                </p>
+                <p className="text-text-secondary">
+                  <span className="font-medium">Status:</span>{" "}
+                  <span className={`font-semibold ${getStatusColor(session.status)}`}>
+                    {getStatusText(session.status)}
+                  </span>
+                </p>
+                {renderTimePlayed()}
+              </div>
+              <div className="space-y-1">
+                <p className="text-text-secondary">
+                  <span className="font-medium">Rate:</span> {formatCurrency(session.pointToCashRate)}/pt
+                </p>
+                <p className="text-text-secondary">
+                  <span className="font-medium">Players:</span> {session.playersInGame.length}
+                </p>
+                <p className="text-text-secondary">
+                  <span className="font-medium">Buy-ins:</span> {formatCurrency(totalBuyInsCash)} ({totalBuyInEntries})
+                </p>
+                {session.invitedUsers && session.invitedUsers.length > 0 && (
+                  <p className="text-blue-400">
+                    <span className="font-medium">Invited:</span> {session.invitedUsers.length}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
-          {/* Show delete button for games the user owns OR for completed invited games */}
           {(session.isOwner !== false || (session.isOwner === false && session.status === "completed")) && (
             <Button
               onClick={() => onConfirmDelete(session.id, session.name, session.status)}
               variant="danger"
               size="sm"
-              className="text-xs px-2 py-1 flex-shrink-0"
+              className="flex-shrink-0"
               title={
                 session.isOwner === false && session.status === "completed"
                   ? "Remove this completed game from your dashboard"
@@ -122,8 +137,8 @@ const GameSessionCard: React.FC<GameSessionCardProps> = ({ session, onSelectGame
         </div>
         <Button
           onClick={() => onSelectGame(session.id)}
-          size="sm"
-          className="w-full text-sm py-2"
+          size="md"
+          className="w-full"
           variant={getButtonVariant(session.status)}
         >
           {getButtonText(session.status)}
@@ -195,7 +210,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
   }, [user])
 
   const handleInvitationHandled = () => {
-    // Refresh invitations after handling one
     fetchPendingInvitations()
   }
 
@@ -204,7 +218,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
     setLoadingFriends(true)
     try {
-      // Get friendships
       const { data: friendsData, error } = await supabase
         .from("friendships")
         .select("id, user_id, friend_id, created_at")
@@ -221,7 +234,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         return
       }
 
-      // Get friend profiles
       const friendIds = friendsData.map((f) => f.friend_id)
       const { data: profilesData, error: profilesError } = await supabase
         .from("profiles")
@@ -234,7 +246,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         return
       }
 
-      // Combine the data
       const friendsWithProfiles = friendsData.map((friendship) => ({
         ...friendship,
         friend_profile: profilesData?.find((p) => p.id === friendship.friend_id),
@@ -308,96 +319,117 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
   const completedGames = gameSessions.filter((gs) => gs.status === "completed").sort(sortGamesByDateDesc)
 
   return (
-    <div className="container mx-auto p-3 sm:p-4">
-      <Button
-        onClick={() => {
-          setIsNewGameModalOpen(true)
-          setPointRate(0.1)
-          setNewGameName(`Poker Game - ${new Date().toLocaleDateString()}`)
-          setFormError("")
-          setStandardBuyInAmount(25)
-          setSelectedFriends([])
-          loadFriends()
-        }}
-        variant="primary"
-        size="lg"
-        className="mb-4 sm:mb-6 w-full text-base sm:text-lg py-3 sm:py-4"
-      >
-        Start New Game
-      </Button>
+    <div className="container mx-auto px-4 py-6 max-w-6xl">
+      <div className="mb-8">
+        <Button
+          onClick={() => {
+            setIsNewGameModalOpen(true)
+            setPointRate(0.1)
+            setNewGameName(`Poker Game - ${new Date().toLocaleDateString()}`)
+            setFormError("")
+            setStandardBuyInAmount(25)
+            setSelectedFriends([])
+            loadFriends()
+          }}
+          variant="primary"
+          size="lg"
+          className="w-full text-lg font-semibold"
+        >
+          🎮 Start New Game
+        </Button>
+      </div>
 
       {!loadingInvitations && pendingInvitations.length > 0 && (
         <section className="mb-8">
-          <h3 className="text-2xl font-semibold text-blue-400 mb-4">
-            🎮 Game Invitations ({pendingInvitations.length})
-          </h3>
-          <div className="bg-blue-900/10 border border-blue-600 rounded-lg p-3 mb-4">
-            <p className="text-blue-200 text-sm">
-              💡 <strong>You have pending game invitations!</strong> Accept to join active games and start playing with
-              your friends.
-            </p>
+          <div className="mb-4">
+            <h3 className="text-2xl font-bold text-blue-400 mb-2">
+              🎮 Game Invitations ({pendingInvitations.length})
+            </h3>
+            <Card className="bg-blue-900/10 border border-blue-600">
+              <div className="flex items-start space-x-3">
+                <div className="text-blue-400 text-xl">💡</div>
+                <div>
+                  <p className="text-blue-200 font-medium">You have pending game invitations!</p>
+                  <p className="text-blue-300 text-sm mt-1">
+                    Accept to join active games and start playing with your friends.
+                  </p>
+                </div>
+              </div>
+            </Card>
           </div>
-          {pendingInvitations.map((invitation) => (
-            <GameInvitationCard
-              key={invitation.id}
-              invitation={invitation}
-              onInvitationHandled={handleInvitationHandled}
-            />
-          ))}
+          <div className="space-y-4">
+            {pendingInvitations.map((invitation) => (
+              <GameInvitationCard
+                key={invitation.id}
+                invitation={invitation}
+                onInvitationHandled={handleInvitationHandled}
+              />
+            ))}
+          </div>
         </section>
       )}
 
       {activeGames.length > 0 && (
         <section className="mb-8">
-          <h3 className="text-2xl font-semibold text-green-400 mb-4">Active Games</h3>
-          {activeGames.map((session) => (
-            <GameSessionCard
-              key={session.id}
-              session={session}
-              onSelectGame={onSelectGame}
-              onConfirmDelete={openDeleteConfirmModal}
-            />
-          ))}
+          <h3 className="text-2xl font-bold text-green-400 mb-4">🟢 Active Games</h3>
+          <div className="space-y-4">
+            {activeGames.map((session) => (
+              <GameSessionCard
+                key={session.id}
+                session={session}
+                onSelectGame={onSelectGame}
+                onConfirmDelete={openDeleteConfirmModal}
+              />
+            ))}
+          </div>
         </section>
       )}
 
       {pendingClosureGames.length > 0 && (
         <section className="mb-8">
-          <h3 className="text-2xl font-semibold text-yellow-400 mb-4">Games Pending Closure</h3>
-          {pendingClosureGames.map((session) => (
-            <GameSessionCard
-              key={session.id}
-              session={session}
-              onSelectGame={onSelectGame}
-              onConfirmDelete={openDeleteConfirmModal}
-            />
-          ))}
+          <h3 className="text-2xl font-bold text-yellow-400 mb-4">🟡 Games Pending Closure</h3>
+          <div className="space-y-4">
+            {pendingClosureGames.map((session) => (
+              <GameSessionCard
+                key={session.id}
+                session={session}
+                onSelectGame={onSelectGame}
+                onConfirmDelete={openDeleteConfirmModal}
+              />
+            ))}
+          </div>
         </section>
       )}
 
       {completedGames.length > 0 && (
         <section className="mb-8">
-          <h3 className="text-2xl font-semibold text-red-400 mb-4">Completed Games</h3>
-          {completedGames.map((session) => (
-            <GameSessionCard
-              key={session.id}
-              session={session}
-              onSelectGame={onSelectGame}
-              onConfirmDelete={openDeleteConfirmModal}
-            />
-          ))}
+          <h3 className="text-2xl font-bold text-red-400 mb-4">🔴 Completed Games</h3>
+          <div className="space-y-4">
+            {completedGames.map((session) => (
+              <GameSessionCard
+                key={session.id}
+                session={session}
+                onSelectGame={onSelectGame}
+                onConfirmDelete={openDeleteConfirmModal}
+              />
+            ))}
+          </div>
         </section>
       )}
 
       {gameSessions.length === 0 && (
-        <Card>
-          <p className="text-text-secondary text-center">No games yet. Click "Start New Game" to begin!</p>
+        <Card className="text-center py-12">
+          <div className="space-y-4">
+            <div className="text-6xl">🎲</div>
+            <h3 className="text-xl font-semibold text-text-primary">No games yet</h3>
+            <p className="text-text-secondary">Click "Start New Game" to begin your first poker session!</p>
+          </div>
         </Card>
       )}
 
       {/* New Game Modal */}
       <Modal isOpen={isNewGameModalOpen} onClose={() => setIsNewGameModalOpen(false)} title="Start New Poker Game">
-        <form onSubmit={handleStartNewGameSubmit} className="space-y-4">
+        <form onSubmit={handleStartNewGameSubmit} className="space-y-6">
           <Input
             label="Game Name"
             id="gameName"
@@ -407,13 +439,14 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
             placeholder="e.g., Friday Night Poker"
           />
           <Input
-            label="Point to Cash Rate (e.g., 0.1 for $0.10 per point)"
+            label="Point to Cash Rate"
             id="pointRate"
             type="number"
             step="0.01"
             min="0.01"
             value={pointRate}
             onChange={(e) => setPointRate(Number.parseFloat(e.target.value))}
+            placeholder="0.10"
           />
           <Input
             label="Standard Buy-in Amount ($)"
@@ -423,42 +456,55 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
             min="0.01"
             value={standardBuyInAmount}
             onChange={(e) => setStandardBuyInAmount(Number.parseFloat(e.target.value))}
-            placeholder="e.g., 25.00"
+            placeholder="25.00"
           />
 
-          {/* Friend Selection */}
-          <div className="space-y-2">
+          <div className="space-y-3">
             <label className="block text-sm font-medium text-text-primary">Invite Friends (Optional)</label>
             {loadingFriends ? (
-              <p className="text-sm text-text-secondary">Loading friends...</p>
-            ) : friends.length === 0 ? (
-              <p className="text-sm text-text-secondary">No friends to invite. Add friends first!</p>
-            ) : (
-              <div className="max-h-32 overflow-y-auto space-y-2 border border-border-default rounded p-2">
-                {friends.map((friendship) => (
-                  <label key={friendship.friend_id} className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selectedFriends.includes(friendship.friend_id)}
-                      onChange={() => handleFriendToggle(friendship.friend_id)}
-                      className="rounded border-border-default"
-                    />
-                    <span className="text-sm text-text-primary">
-                      {friendship.friend_profile?.full_name || friendship.friend_profile?.email}
-                    </span>
-                  </label>
-                ))}
+              <div className="flex items-center space-x-2 text-text-secondary">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-brand-primary"></div>
+                <span>Loading friends...</span>
               </div>
+            ) : friends.length === 0 ? (
+              <Card className="bg-surface-input">
+                <p className="text-text-secondary text-center">No friends to invite. Add friends first!</p>
+              </Card>
+            ) : (
+              <Card className="max-h-40 overflow-y-auto">
+                <div className="space-y-3">
+                  {friends.map((friendship) => (
+                    <label key={friendship.friend_id} className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-surface-input transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={selectedFriends.includes(friendship.friend_id)}
+                        onChange={() => handleFriendToggle(friendship.friend_id)}
+                        className="rounded border-border-default text-brand-primary focus:ring-brand-primary"
+                      />
+                      <span className="text-text-primary font-medium">
+                        {friendship.friend_profile?.full_name || friendship.friend_profile?.email}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </Card>
             )}
             {selectedFriends.length > 0 && (
-              <p className="text-sm text-blue-400">
-                {selectedFriends.length} friend{selectedFriends.length > 1 ? "s" : ""} will be invited
-              </p>
+              <Card className="bg-blue-900/10 border border-blue-600">
+                <p className="text-blue-200 text-sm">
+                  <span className="font-medium">{selectedFriends.length}</span> friend{selectedFriends.length > 1 ? "s" : ""} will be invited
+                </p>
+              </Card>
             )}
           </div>
 
-          {formError && <p className="text-sm text-red-500">{formError}</p>}
-          <div className="flex justify-end space-x-2">
+          {formError && (
+            <Card className="bg-red-900/10 border border-red-600">
+              <p className="text-red-400 text-sm">{formError}</p>
+            </Card>
+          )}
+
+          <div className="flex justify-end space-x-3 pt-4">
             <Button type="button" variant="ghost" onClick={() => setIsNewGameModalOpen(false)}>
               Cancel
             </Button>
@@ -479,42 +525,54 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
             : `Confirm Delete Game: ${gameToDelete?.name || ""}`
         }
       >
-        <p className="text-text-secondary mb-4">
-          {gameToDelete?.status === "completed" &&
-          gameSessions.find((g) => g.id === gameToDelete.id)?.isOwner === false ? (
-            <>
-              Are you sure you want to remove the game "{gameToDelete?.name || "this game"}" from your dashboard?
-              <span className="text-blue-400 block mt-2 text-sm">
-                ℹ️ This will only remove it from your view. The original game and your stats will be preserved.
-              </span>
-            </>
-          ) : (
-            <>
-              Are you sure you want to delete the game "{gameToDelete?.name || "this game"}"?
-              {(gameToDelete?.status === "active" || gameToDelete?.status === "pending_close") && (
-                <strong className="text-red-400 block mt-2">
-                  This game is not yet completed. Deleting it will discard its current progress.
-                </strong>
-              )}
-              {gameToDelete?.status === "completed" && (
-                <span className="text-green-400 block mt-2 text-sm">
-                  ✓ Your personal stats from this game will be preserved in your profile.
-                </span>
-              )}
-              This action cannot be undone.
-            </>
-          )}
-        </p>
-        <div className="flex justify-end space-x-2">
-          <Button type="button" variant="ghost" onClick={() => setGameToDelete(null)}>
-            Cancel
-          </Button>
-          <Button onClick={confirmDeleteGame} variant="danger">
-            {gameToDelete?.status === "completed" &&
-            gameSessions.find((g) => g.id === gameToDelete.id)?.isOwner === false
-              ? "Remove from Dashboard"
-              : "Delete Game"}
-          </Button>
+        <div className="space-y-4">
+          <Card className="bg-yellow-900/10 border border-yellow-600">
+            <div className="flex items-start space-x-3">
+              <div className="text-yellow-400 text-xl">⚠️</div>
+              <div>
+                {gameToDelete?.status === "completed" &&
+                gameSessions.find((g) => g.id === gameToDelete.id)?.isOwner === false ? (
+                  <>
+                    <p className="text-text-primary font-medium">
+                      Are you sure you want to remove "{gameToDelete?.name}" from your dashboard?
+                    </p>
+                    <p className="text-blue-400 text-sm mt-2">
+                      ℹ️ This will only remove it from your view. The original game and your stats will be preserved.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-text-primary font-medium">
+                      Are you sure you want to delete "{gameToDelete?.name}"?
+                    </p>
+                    {(gameToDelete?.status === "active" || gameToDelete?.status === "pending_close") && (
+                      <p className="text-red-400 font-medium mt-2">
+                        This game is not yet completed. Deleting it will discard its current progress.
+                      </p>
+                    )}
+                    {gameToDelete?.status === "completed" && (
+                      <p className="text-green-400 text-sm mt-2">
+                        ✓ Your personal stats from this game will be preserved in your profile.
+                      </p>
+                    )}
+                    <p className="text-text-secondary text-sm mt-2">This action cannot be undone.</p>
+                  </>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          <div className="flex justify-end space-x-3">
+            <Button type="button" variant="ghost" onClick={() => setGameToDelete(null)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmDeleteGame} variant="danger">
+              {gameToDelete?.status === "completed" &&
+              gameSessions.find((g) => g.id === gameToDelete.id)?.isOwner === false
+                ? "Remove from Dashboard"
+                : "Delete Game"}
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>

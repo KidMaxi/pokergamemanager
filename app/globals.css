@@ -50,6 +50,19 @@
   background-attachment: fixed;
 }
 
+/* Enhanced Typography and Spacing */
+.text-balance {
+  text-wrap: balance;
+}
+
+.leading-relaxed {
+  line-height: 1.625;
+}
+
+.leading-loose {
+  line-height: 2;
+}
+
 /* Tailwind Custom Colors */
 .bg-surface-main {
   background-color: var(--surface-main);
@@ -133,6 +146,23 @@
   background-color: var(--info);
 }
 
+/* Enhanced Card and Box Styling */
+.bg-surface-card {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+}
+
+.hover\:shadow-lg:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.hover\:shadow-xl:hover {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.shadow-2xl {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
 /* Bottom Banner Ad Styling */
 .bottom-banner-ad {
   position: fixed;
@@ -145,43 +175,113 @@
   text-align: center;
 }
 
-/* Responsive Design */
+/* Enhanced Mobile Rounded Corners and Spacing */
 @media (max-width: 768px) {
   .dashboard-background,
   .default-background {
     background-attachment: scroll;
+  }
+  
+  /* Enhanced mobile spacing */
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  
+  /* Mobile-specific rounded corners for better visual appeal */
+  .rounded-lg {
+    border-radius: 0.75rem; /* 12px - more rounded on mobile */
+  }
+  
+  .rounded-xl {
+    border-radius: 1rem; /* 16px - even more rounded on mobile */
+  }
+  
+  .rounded-2xl {
+    border-radius: 1.25rem; /* 20px - very rounded on mobile */
+  }
+  
+  /* Enhanced mobile card styling with better padding */
+  .bg-surface-card {
+    border-radius: 0.75rem;
+    padding: 1rem;
+  }
+  
+  /* Mobile button enhancements */
+  button {
+    border-radius: 0.75rem;
+    min-height: 44px;
+    padding: 0.75rem 1rem;
+  }
+  
+  /* Mobile input field enhancements */
+  input {
+    border-radius: 0.75rem;
+    min-height: 44px;
+    padding: 0.75rem;
+  }
+  
+  /* Mobile modal enhancements */
+  .modal-content {
+    border-radius: 1rem;
+    margin: 1rem;
+  }
+  
+  /* Enhanced mobile text spacing */
+  .space-y-3 > * + * {
+    margin-top: 0.75rem;
+  }
+  
+  .space-y-4 > * + * {
+    margin-top: 1rem;
+  }
+  
+  .space-y-6 > * + * {
+    margin-top: 1.5rem;
   }
 }
 
 /* Smooth transitions for all interactive elements */
 * {
   transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow,
-    transform, filter, backdrop-filter;
+    transform, filter, backdrop-filter, border-radius;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }
 
-/* Custom scrollbar styling */
+/* Enhanced text readability */
+p, span, div {
+  line-height: 1.6;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+/* Custom scrollbar styling with rounded corners */
 ::-webkit-scrollbar {
   width: 8px;
 }
 
 ::-webkit-scrollbar-track {
   background: var(--surface-main);
+  border-radius: 0.5rem;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--surface-secondary);
-  border-radius: 4px;
+  border-radius: 0.5rem;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--surface-hover);
 }
 
-/* Focus ring styling */
+/* Focus ring styling with rounded corners */
 .focus\:ring-brand-primary:focus {
   --tw-ring-color: var(--brand-primary);
+  border-radius: inherit;
 }
 
 /* Loading spinner */
@@ -193,4 +293,83 @@
 
 .animate-spin {
   animation: spin 1s linear infinite;
+}
+
+/* Enhanced mobile touch targets and interactions */
+@media (max-width: 768px) {
+  /* Better touch targets */
+  button, input, select, textarea {
+    min-height: 44px;
+  }
+  
+  /* Mobile-specific hover states (touch-friendly) */
+  button:active {
+    transform: scale(0.98);
+  }
+  
+  /* Enhanced mobile card interactions */
+  .hover\:shadow-xl:hover {
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  }
+  
+  /* Improved mobile typography */
+  .text-sm {
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  
+  .text-base {
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+  
+  .text-lg {
+    font-size: 1.125rem;
+    line-height: 1.6;
+  }
+}
+
+/* Enhanced spacing utilities for better text padding */
+.p-4 {
+  padding: 1rem;
+}
+
+.p-6 {
+  padding: 1.5rem;
+}
+
+.px-4 {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+.py-3 {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.py-4 {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+/* Improved visual hierarchy */
+.space-y-2 > * + * {
+  margin-top: 0.5rem;
+}
+
+.space-y-3 > * + * {
+  margin-top: 0.75rem;
+}
+
+.space-y-4 > * + * {
+  margin-top: 1rem;
+}
+
+.space-y-6 > * + * {
+  margin-top: 1.5rem;
+}
+
+.space-y-8 > * + * {
+  margin-top: 2rem;
 }

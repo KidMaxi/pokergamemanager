@@ -5,7 +5,7 @@ import type React from "react"
 interface InputProps {
   type?: string
   placeholder?: string
-  value?: string
+  value?: string | number
   onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void
   className?: string
   disabled?: boolean
@@ -14,6 +14,9 @@ interface InputProps {
   error?: string
   id?: string
   name?: string
+  min?: string | number
+  max?: string | number
+  step?: string | number
 }
 
 const Input: React.FC<InputProps> = ({
@@ -28,11 +31,14 @@ const Input: React.FC<InputProps> = ({
   error,
   id,
   name,
+  min,
+  max,
+  step,
 }) => {
   const inputId = id || name || placeholder?.toLowerCase().replace(/\s+/g, "-")
 
   return (
-    <div className="w-full">
+    <div className="w-full space-y-2">
       {label && (
         <label htmlFor={inputId} className="block text-sm font-medium text-text-primary mb-2">
           {label}
@@ -48,18 +54,23 @@ const Input: React.FC<InputProps> = ({
         onChange={onChange}
         disabled={disabled}
         required={required}
+        min={min}
+        max={max}
+        step={step}
         className={`
-          w-full px-4 py-3 rounded-lg
-          bg-surface-input text-text-primary
+          w-full px-4 py-3 rounded-lg sm:rounded-xl
+          bg-surface-input text-text-primary border border-border-default
           placeholder-text-secondary
-          focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-opacity-50
+          focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent
+          hover:border-brand-primary
           disabled:opacity-50 disabled:cursor-not-allowed
-          transition-colors duration-200
-          ${error ? "ring-2 ring-red-500" : ""}
+          transition-all duration-200
+          text-base leading-relaxed
+          ${error ? "ring-2 ring-red-500 border-red-500" : ""}
           ${className}
         `}
       />
-      {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+      {error && <p className="mt-2 text-sm text-red-500 px-1">{error}</p>}
     </div>
   )
 }

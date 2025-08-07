@@ -1852,13 +1852,13 @@ export default function ActiveGameScreen({
                 </p>
                 <p className="text-sm text-white font-semibold">
                   Total Physical Points on Table to Account For:{" "}
-                  <span className="text-white">{physicalPointsForFinalize}</span>
+                  <span className="text-yellow-300 font-bold">{physicalPointsForFinalize}</span>
                 </p>
 
                 {/* Show breakdown of physical points */}
                 <div className="bg-slate-700 p-3 rounded-lg border text-xs">
                   <p className="font-semibold mb-2 text-white">Physical Points Breakdown:</p>
-                  <div className="space-y-1">
+                  <div className="space-y-1 text-white">
                     <p>
                       Active Players: {gameStateInfo.activePlayers.reduce((sum, p) => sum + p.pointStack, 0)} points
                     </p>
@@ -1866,15 +1866,15 @@ export default function ActiveGameScreen({
                       Left by Early Cashouts:{" "}
                       {gameStateInfo.cashedOutPlayers.reduce((sum, p) => sum + (p.pointsLeftOnTable || 0), 0)} points
                     </p>
-                    <p className="font-semibold border-t pt-1">Total: {physicalPointsForFinalize} points</p>
+                    <p className="font-semibold border-t pt-1 text-yellow-300">Total: {physicalPointsForFinalize} points</p>
                   </div>
                 </div>
 
                 {finalPointInputsOld.length > 0 ? (
                   finalPointInputsOld.map((input) => (
                     <div key={input.playerId} className="flex items-center justify-between">
-                      <label htmlFor={`final-points-${input.playerId}`} className="text-white mr-2">
-                        <span className="text-white">{input.name}</span> (Active):
+                      <label htmlFor={`final-points-${input.playerId}`} className="text-white mr-2 font-medium">
+                        <span className="text-white">{input.name}</span> <span className="text-gray-300">(Active):</span>
                       </label>
                       <Input
                         id={`final-points-${input.playerId}`}
@@ -1898,12 +1898,12 @@ export default function ActiveGameScreen({
                   <div className="flex justify-between items-center">
                     <span className="text-white text-sm">
                       Points Entered:{" "}
-                      <span className="text-white">
+                      <span className="text-yellow-300 font-semibold">
                         {finalPointInputsOld.reduce((sum, item) => sum + (Number.parseInt(item.points, 10) || 0), 0)}
                       </span>
                     </span>
                     <span className="text-white text-sm">
-                      Table Total: <span className="text-white">{physicalPointsForFinalize}</span>
+                      Table Total: <span className="text-yellow-300 font-semibold">{physicalPointsForFinalize}</span>
                     </span>
                   </div>
                   <div className="mt-2 text-center">
