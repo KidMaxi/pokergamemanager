@@ -26,6 +26,7 @@ import GameStateDebugPanel from "../components/debug/GameStateDebugPanel"
 import FriendsFeatureTestResults from "../components/debug/FriendsFeatureTestResults"
 import InvitationDiagnostics from "../components/debug/InvitationDiagnostics"
 import GameInviteSystemAnalysis from "../components/analysis/GameInviteSystemAnalysis"
+import FriendsDiagnostic from "../components/debug/FriendsDiagnostic"
 
 export default function Home() {
   const { user, loading: authLoading, emailVerified } = useAuth()
@@ -40,6 +41,7 @@ export default function Home() {
   const [showFriendsTest, setShowFriendsTest] = useState(false)
   const [showInvitationDiagnostics, setShowInvitationDiagnostics] = useState(false)
   const [showSystemAnalysis, setShowSystemAnalysis] = useState(false)
+  const [showFriendsDiagnostic, setShowFriendsDiagnostic] = useState(false)
 
   usePWA()
 
@@ -704,6 +706,11 @@ export default function Home() {
       )
     }
 
+    // Show friends diagnostic if enabled
+    if (showFriendsDiagnostic) {
+      return <FriendsDiagnostic />
+    }
+
     // Show friends feature test results if enabled
     if (showFriendsTest) {
       return <FriendsFeatureTestResults />
@@ -792,6 +799,12 @@ export default function Home() {
           Poker Homegame Manager V51 &copy; {new Date().getFullYear()}
           {process.env.NODE_ENV === "development" && (
             <div className="mt-2 space-x-4">
+              <button
+                onClick={() => setShowFriendsDiagnostic(!showFriendsDiagnostic)}
+                className="text-orange-400 hover:text-orange-300 text-xs underline"
+              >
+                {showFriendsDiagnostic ? "Hide" : "Show"} Friends Diagnostic
+              </button>
               <button
                 onClick={() => setShowFriendsTest(!showFriendsTest)}
                 className="text-blue-400 hover:text-blue-300 text-xs underline"
