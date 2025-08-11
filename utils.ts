@@ -62,3 +62,8 @@ export const formatDurationCompact = (durationMs: number): string => {
     return `${minutes}m`
   }
 }
+
+export const formatElapsedTime = (startTime: string): string => {
+  const duration = calculateDuration(startTime)
+  return formatDuration(duration)
+}
