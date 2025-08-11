@@ -246,6 +246,15 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
                 )}
               </button>
 
+              <button
+                onClick={() => setCurrentView("stats")}
+                className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                  activeView === "stats" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                Stats
+              </button>
+
               {user && (
                 <button
                   onClick={handleOpenProfile}

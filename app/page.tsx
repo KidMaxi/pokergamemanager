@@ -27,6 +27,7 @@ import FriendsFeatureTestResults from "../components/debug/FriendsFeatureTestRes
 import InvitationDiagnostics from "../components/debug/InvitationDiagnostics"
 import GameInviteSystemAnalysis from "../components/analysis/GameInviteSystemAnalysis"
 import FriendsDiagnostic from "../components/debug/FriendsDiagnostic"
+import StatsPage from "../components/StatsPage"
 
 export default function Home() {
   const { user, loading: authLoading, emailVerified } = useAuth()
@@ -193,7 +194,7 @@ export default function Home() {
       setLoading(false)
       // Restore current view from localStorage after refresh
       const savedView = localStorage.getItem("poker-current-view")
-      if (savedView && (savedView === "friends" || savedView === "dashboard")) {
+      if (savedView && (savedView === "friends" || savedView === "dashboard" || savedView === "stats")) {
         setCurrentView(savedView as View)
         localStorage.removeItem("poker-current-view") // Clean up
       }
@@ -744,7 +745,7 @@ export default function Home() {
         if (activeSession) {
           const activeGameScreenProps: AGScreenPropsInternal = {
             session: activeSession,
-            players: [],
+            players: players,
             onUpdateSession: handleUpdateSession,
             onEndGame: handleEndGame,
             onNavigateToDashboard: handleNavigateToDashboard,
@@ -756,18 +757,20 @@ export default function Home() {
         setActiveGameId(null)
         return (
           <GameDashboard
-            players={[]}
+            players={players}
             gameSessions={gameSessions}
             onStartNewGame={handleStartNewGame}
             onSelectGame={handleSelectGame}
             onDeleteGame={handleDeleteGame}
           />
         )
+      case "stats":
+        return <StatsPage />
       case "dashboard":
       default:
         return (
           <GameDashboard
-            players={[]}
+            players={players}
             gameSessions={gameSessions}
             onStartNewGame={handleStartNewGame}
             onSelectGame={handleSelectGame}

@@ -72,6 +72,39 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
           )}
         </div>
 
+        {/* Poker Stats Section */}
+        <div className="bg-surface-card p-4 rounded-lg">
+          <h3 className="text-lg font-semibold text-text-primary mb-3">Poker Statistics</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="text-center p-3 bg-surface-background rounded-lg">
+              <div className="text-2xl font-bold text-text-primary">{profile?.games_played || 0}</div>
+              <div className="text-sm text-text-secondary">Games Played</div>
+            </div>
+            <div className="text-center p-3 bg-surface-background rounded-lg">
+              <div className="text-2xl font-bold text-text-primary">{profile?.total_wins || 0}</div>
+              <div className="text-sm text-text-secondary">Total Wins</div>
+            </div>
+            <div className="text-center p-3 bg-surface-background rounded-lg">
+              <div className="text-2xl font-bold text-text-primary">
+                {profile?.games_played && profile.games_played > 0
+                  ? `${Math.round(((profile.total_wins || 0) / profile.games_played) * 100)}%`
+                  : "0%"}
+              </div>
+              <div className="text-sm text-text-secondary">Win Rate</div>
+            </div>
+            <div className="text-center p-3 bg-surface-background rounded-lg">
+              <div
+                className={`text-2xl font-bold ${
+                  (profile?.all_time_profit_loss || 0) >= 0 ? "text-green-500" : "text-red-500"
+                }`}
+              >
+                ${profile?.all_time_profit_loss ? Number(profile.all_time_profit_loss).toFixed(2) : "0.00"}
+              </div>
+              <div className="text-sm text-text-secondary">P/L</div>
+            </div>
+          </div>
+        </div>
+
         {/* Update Profile Form */}
         <form onSubmit={handleUpdateProfile} className="space-y-4">
           <Input

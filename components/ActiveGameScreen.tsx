@@ -5,11 +5,12 @@ import { useState, useEffect } from "react"
 import type { GameSession, PlayerInGame, ActiveGameScreenProps } from "../types"
 import { generateLogId, formatCurrency, formatDate } from "../utils"
 import Button from "./common/Button"
-import Card from "./common/Card"
 import Input from "./common/Input"
 import Modal from "./common/Modal"
 import LiveTimer from "./common/LiveTimer"
 import PaymentSummary from "./PaymentSummary"
+// Fixed import path from supabaseClient to lib/supabase
+import { supabase } from "../lib/supabase"
 
 const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   session,
@@ -18,23 +19,68 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   onEndGame,
   onNavigateToDashboard,
   onAddNewPlayerGlobally,
+  user, // Assuming user is passed as a prop
 }) => {
   const [localSession, setLocalSession] = useState<GameSession>(session)
   const [showAddPlayerModal, setShowAddPlayerModal] = useState(false)
   const [showBuyInModal, setShowBuyInModal] = useState(false)
   const [showCashOutModal, setShowCashOutModal] = useState(false)
   const [showEndGameModal, setShowEndGameModal] = useState(false)
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false)
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerInGame | null>(null)
   const [newPlayerName, setNewPlayerName] = useState("")
   const [buyInAmount, setBuyInAmount] = useState("")
   const [cashOutAmount, setCashOutAmount] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [userFriends, setUserFriends] = useState<string[]>([])
 
   // Sync local session with prop changes
   useEffect(() => {
     setLocalSession(session)
   }, [session])
+
+  useEffect(() => {
+    if (user) {
+      loadUserFriends()
+    }
+  }, [user])
+
+  const loadUserFriends = async () => {
+    if (!user) return
+
+    try {
+      const { data: friendships, error } = await supabase
+        .from("friendships")
+        .select(`
+          user_id,
+          friend_id,
+          user_profile:profiles!friendships_user_id_fkey (
+            id,
+            full_name,
+            email
+          ),
+          friend_profile:profiles!friendships_friend_id_fkey (
+            id,
+            full_name,
+            email
+          )
+        `)
+        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+
+      if (error) throw error
+
+      const friendIds =
+        friendships?.map((friendship) => {
+          // Get the friend's ID (the one that's not the current user)
+          return friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
+        }) || []
+
+      setUserFriends(friendIds)
+    } catch (error) {
+      console.error("Error loading friends:", error)
+    }
+  }
 
   const updateSession = (updatedSession: GameSession) => {
     setLocalSession(updatedSession)
@@ -217,25 +263,49 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const activePlayers = localSession.playersInGame.filter((p) => p.status === "active")
   const cashedOutPlayers = localSession.playersInGame.filter((p) => p.status === "cashed_out_early")
 
+  const isFriendWithPlayer = (playerId: string): boolean => {
+    return userFriends.includes(playerId)
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-green-900 to-slate-900 p-4">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
+      <div className="max-w-4xl mx-auto">
         <div className="bg-slate-800/90 backdrop-blur-sm rounded-lg p-6 mb-6">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="flex justify-between items-start mb-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-green-400 mb-2">{localSession.name}</h1>
-              <div className="flex flex-wrap gap-4 text-sm text-gray-300">
-                <span>Started: {formatDate(localSession.startTime)}</span>
-                <span>Rate: {formatCurrency(localSession.pointToCashRate)}/point</span>
-                <span>Players: {localSession.playersInGame.length}</span>
+              <h1 className="text-2xl font-bold text-green-400 mb-2">{localSession.name}</h1>
+              <div className="space-y-1 text-sm text-gray-300">
+                <div>Started: {formatDate(localSession.startTime)}</div>
+                <div className="flex items-center gap-4">
+                  <span>
+                    Time: <LiveTimer startTime={localSession.startTime} />
+                  </span>
+                </div>
+                <div>Rate: {formatCurrency(localSession.pointToCashRate)}/pt</div>
+                <div>Buy-in: {formatCurrency(localSession.standardBuyInAmount)}</div>
+                <div className="text-green-400 font-semibold">Status: Active</div>
               </div>
             </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <LiveTimer startTime={localSession.startTime} />
-              <Button onClick={onNavigateToDashboard} variant="ghost" size="sm">
-                Back to Dashboard
-              </Button>
+            <Button onClick={() => setShowEndGameModal(true)} variant="destructive" size="sm">
+              Close Game
+            </Button>
+          </div>
+
+          <div className="border-t border-slate-600 pt-4 space-y-2 text-white">
+            <div>
+              Total Buy-ins:{" "}
+              <span className="font-semibold">
+                {formatCurrency(localSession.playersInGame.reduce((sum, p) => sum + getPlayerTotalBuyIn(p), 0))}
+              </span>
+            </div>
+            <div>
+              Current Pot:{" "}
+              <span className="font-semibold">
+                {formatCurrency(localSession.playersInGame.reduce((sum, p) => sum + getPlayerTotalBuyIn(p), 0))}
+              </span>
+            </div>
+            <div>
+              Points in Play: <span className="font-semibold">{localSession.currentPhysicalPointsOnTable}</span>
             </div>
           </div>
         </div>
@@ -246,137 +316,123 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           </div>
         )}
 
-        {/* Game Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <Card>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-green-400">{localSession.currentPhysicalPointsOnTable}</p>
-              <p className="text-gray-400">Points on Table</p>
-            </div>
-          </Card>
-          <Card>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-blue-400">{activePlayers.length}</p>
-              <p className="text-gray-400">Active Players</p>
-            </div>
-          </Card>
-          <Card>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-yellow-400">{cashedOutPlayers.length}</p>
-              <p className="text-gray-400">Cashed Out</p>
-            </div>
-          </Card>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <Button
+            onClick={() => setShowAddPlayerModal(true)}
+            className="bg-green-600 hover:bg-green-700 text-white py-3"
+            size="lg"
+          >
+            Add New Player to Game
+          </Button>
+          <Button
+            onClick={() => setShowAddFriendModal(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white py-3"
+            size="lg"
+          >
+            Add Friend to Game
+          </Button>
         </div>
 
-        {/* Active Players */}
-        <Card className="mb-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-white">Active Players</h2>
-            <Button onClick={() => setShowAddPlayerModal(true)} variant="primary" size="sm">
-              Add Player
-            </Button>
-          </div>
+        <div className="space-y-4">
+          {localSession.playersInGame.map((player) => {
+            const totalBuyIn = getPlayerTotalBuyIn(player)
+            const profitLoss = getPlayerProfitLoss(player)
+            const isActive = player.pointStack > 0
+            const isFriend = isFriendWithPlayer(player.playerId)
 
-          {activePlayers.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-400">No active players</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-slate-600">
-                    <th className="text-left py-2 text-gray-300">Player</th>
-                    <th className="text-right py-2 text-gray-300">Points</th>
-                    <th className="text-right py-2 text-gray-300">Total Buy-in</th>
-                    <th className="text-right py-2 text-gray-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activePlayers.map((player) => (
-                    <tr key={player.playerId} className="border-b border-slate-700">
-                      <td className="py-3 text-white font-medium">{player.name}</td>
-                      <td className="py-3 text-right text-green-400 font-bold">{player.pointStack}</td>
-                      <td className="py-3 text-right text-gray-300">{formatCurrency(getPlayerTotalBuyIn(player))}</td>
-                      <td className="py-3 text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            onClick={() => {
-                              setSelectedPlayer(player)
-                              setBuyInAmount(localSession.standardBuyInAmount.toString())
-                              setShowBuyInModal(true)
-                            }}
-                            variant="ghost"
-                            size="sm"
-                          >
-                            Buy-in
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              setSelectedPlayer(player)
-                              setCashOutAmount("")
-                              setShowCashOutModal(true)
-                            }}
-                            variant="ghost"
-                            size="sm"
-                          >
-                            Cash Out
-                          </Button>
+            return (
+              <div key={player.playerId} className="bg-slate-800/90 backdrop-blur-sm rounded-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-xl font-semibold text-green-400">{player.name}</h3>
+                    {/* Added friendship status indicators - green checkmark for friends, blue head icon for non-friends */}
+                    {isFriend ? (
+                      <div className="w-6 h-6 bg-green-500 rounded flex items-center justify-center">
+                        <span className="text-white text-sm">✓</span>
+                      </div>
+                    ) : (
+                      <div className="w-6 h-6 bg-blue-500 rounded flex items-center justify-center">
+                        <span className="text-white text-sm">👤</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
+                  <div>
+                    <span className="text-gray-400">Points:</span>
+                    <div className="text-white font-semibold">{player.pointStack}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Buy-ins:</span>
+                    <div className="text-white font-semibold">
+                      {formatCurrency(totalBuyIn)} ({player.buyIns.length})
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Cash-outs:</span>
+                    <div className="text-white font-semibold">{formatCurrency(player.cashOutAmount)}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">P/L:</span>
+                    <div className={`font-semibold ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {formatCurrency(profitLoss)}
+                    </div>
+                  </div>
+                </div>
+
+                {player.buyIns.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-gray-400 text-sm mb-2">Buy-ins:</h4>
+                    <div className="space-y-2">
+                      {player.buyIns.map((buyIn, index) => (
+                        <div key={index} className="flex items-center justify-between bg-slate-700/50 rounded p-2">
+                          <span className="text-white text-sm">
+                            {formatCurrency(buyIn.amount)} at{" "}
+                            {new Date(buyIn.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                          <div className="flex gap-2">
+                            <button className="text-orange-400 hover:text-orange-300 text-sm">✏️</button>
+                            <button className="text-red-400 hover:text-red-300 text-sm">🗑️</button>
+                          </div>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-        {/* Cashed Out Players */}
-        {cashedOutPlayers.length > 0 && (
-          <Card className="mb-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Cashed Out Players</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-slate-600">
-                    <th className="text-left py-2 text-gray-300">Player</th>
-                    <th className="text-right py-2 text-gray-300">Cash Out</th>
-                    <th className="text-right py-2 text-gray-300">Total Buy-in</th>
-                    <th className="text-right py-2 text-gray-300">P/L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cashedOutPlayers.map((player) => {
-                    const profitLoss = getPlayerProfitLoss(player)
-                    return (
-                      <tr key={player.playerId} className="border-b border-slate-700">
-                        <td className="py-3 text-white font-medium">{player.name}</td>
-                        <td className="py-3 text-right text-gray-300">{formatCurrency(player.cashOutAmount)}</td>
-                        <td className="py-3 text-right text-gray-300">{formatCurrency(getPlayerTotalBuyIn(player))}</td>
-                        <td
-                          className={`py-3 text-right font-bold ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}
-                        >
-                          {formatCurrency(profitLoss)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
+                {isActive && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      onClick={() => {
+                        setSelectedPlayer(player)
+                        setBuyInAmount(localSession.standardBuyInAmount.toString())
+                        setShowBuyInModal(true)
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      Buy-in
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setSelectedPlayer(player)
+                        setCashOutAmount("")
+                        setShowCashOutModal(true)
+                      }}
+                      variant="ghost"
+                      className="border border-gray-600 hover:bg-slate-700"
+                    >
+                      Cash Out
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
 
         {/* Payment Summary */}
         <PaymentSummary session={localSession} />
-
-        {/* End Game Button */}
-        <div className="text-center mt-6">
-          <Button onClick={() => setShowEndGameModal(true)} variant="primary" size="lg">
-            End Game
-          </Button>
-        </div>
 
         {/* Modals */}
         <Modal
@@ -509,6 +565,32 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               <Button onClick={handleEndGame} variant="primary">
                 End Game
               </Button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          isOpen={showAddFriendModal}
+          onClose={() => {
+            setShowAddFriendModal(false)
+            setError("")
+          }}
+          title="Add Friend to Game"
+        >
+          <div className="space-y-4">
+            <p className="text-gray-400">Select friends to invite to this game:</p>
+            {/* Friend selection would go here - similar to GameDashboard */}
+            <div className="flex justify-end gap-2">
+              <Button
+                onClick={() => {
+                  setShowAddFriendModal(false)
+                  setError("")
+                }}
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+              <Button variant="primary">Send Invitations</Button>
             </div>
           </div>
         </Modal>

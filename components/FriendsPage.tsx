@@ -17,6 +17,9 @@ interface Friend {
     id: string
     full_name: string
     email: string
+    all_time_profit_loss: number | null
+    games_played: number | null
+    total_wins: number | null
   }
   created_at: string
 }
@@ -62,101 +65,104 @@ const FriendsPage: React.FC = () => {
   const [success, setSuccess] = useState("")
   const [activeTab, setActiveTab] = useState<TabType>("friends")
 
-  const loadFriendsData = useCallback(async () => {
+  const fetchFriends = useCallback(async () => {
     if (!user) return
 
-    setLoading(true)
     try {
-      console.log("🔍 Loading friends data for user:", user.id)
+      setLoading(true)
+      setError("")
 
-      // Try to use the database function first
-      try {
-        const { data: friendsData, error: friendsError } = await supabase.rpc("get_user_friends", {
-          user_id: user.id,
-        })
+      // Try using database functions first
+      const { data: functionData, error: functionError } = await supabase.rpc("get_user_friends", {
+        user_id: user.id,
+      })
 
-        if (!friendsError && friendsData) {
-          // Transform the data to match our Friend interface
-          const transformedFriends: Friend[] = friendsData
-            .filter((friend: any) => friend.friend_id !== user.id) // Exclude self-friendships
-            .map((friend: any) => ({
-              id: `${user.id}-${friend.friend_id}`,
-              user_id: user.id,
-              friend_id: friend.friend_id,
-              friend_profile: {
-                id: friend.friend_id,
-                full_name: friend.friend_name || "",
-                email: friend.friend_email || "",
-              },
-              created_at: friend.friendship_created_at,
-            }))
-          setFriends(transformedFriends)
-          console.log("✅ Loaded friends using database function:", transformedFriends.length)
-        } else {
-          throw new Error("Database function not available")
-        }
-      } catch (functionError) {
-        console.log("Database function not available, using direct queries")
-
-        // Fallback: Load friends directly with bidirectional query
-        const { data: friendsData, error: friendsError } = await supabase
-          .from("friendships")
-          .select(`
-            id,
-            user_id,
-            friend_id,
-            created_at,
-            user_profile:profiles!friendships_user_id_fkey (
-              id,
-              full_name,
-              email
-            ),
-            friend_profile:profiles!friendships_friend_id_fkey (
-              id,
-              full_name,
-              email
-            )
-          `)
-          .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
-
-        if (friendsError) {
-          console.error("❌ Error loading friends:", friendsError)
-          throw friendsError
-        }
-
-        // Transform bidirectional friendships and filter out self-friendships
-        const friendsMap = new Map<string, Friend>()
-        ;(friendsData || []).forEach((friendship: any) => {
-          const isUserInitiator = friendship.user_id === user.id
-          const friendId = isUserInitiator ? friendship.friend_id : friendship.user_id
-
-          // Skip if this is somehow a self-friendship
-          if (friendId === user.id) return
-
-          // Select the correct profile based on which side of the relationship the current user is on
-          const friendProfile = isUserInitiator ? friendship.friend_profile : friendship.user_profile
-
-          // Only add if we haven't seen this friend before
-          if (!friendsMap.has(friendId)) {
-            friendsMap.set(friendId, {
-              id: friendship.id,
-              user_id: user.id,
-              friend_id: friendId,
-              friend_profile: friendProfile || {
-                id: friendId,
-                full_name: "Unknown User",
-                email: "",
-              },
-              created_at: friendship.created_at,
-            })
-          }
-        })
-
-        const transformedFriends = Array.from(friendsMap.values())
-        setFriends(transformedFriends)
-        console.log("✅ Loaded friends using direct query:", transformedFriends.length)
+      if (!functionError && functionData) {
+        setFriends(functionData)
+        setLoading(false)
+        return
       }
 
+      // Fallback to direct query with bidirectional support
+      const { data: friendshipsData, error: friendshipsError } = await supabase
+        .from("friendships")
+        .select(`
+          id,
+          user_id,
+          friend_id,
+          created_at,
+          user_profile:profiles!friendships_user_id_fkey (
+            id,
+            full_name,
+            email,
+            all_time_profit_loss,
+            games_played,
+            total_wins
+          ),
+          friend_profile:profiles!friendships_friend_id_fkey (
+            id,
+            full_name,
+            email,
+            all_time_profit_loss,
+            games_played,
+            total_wins
+          )
+        `)
+        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+
+      if (friendshipsError) {
+        console.error("Error fetching friends:", friendshipsError)
+        setError("Failed to load friends. Please try refreshing the page.")
+        setLoading(false)
+        return
+      }
+
+      const transformedFriends =
+        friendshipsData
+          ?.map((friendship: any) => {
+            // Determine which profile to show based on current user's position
+            const friendProfile = friendship.user_id === user.id ? friendship.friend_profile : friendship.user_profile
+            const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
+
+            // Filter out self-friendships and null profiles
+            if (!friendProfile || friendProfile.id === user.id || !friendId) {
+              console.warn("Skipping invalid friendship:", friendship)
+              return null
+            }
+
+            return {
+              id: friendship.id,
+              user_id: friendship.user_id,
+              friend_id: friendId,
+              friend_profile: {
+                ...friendProfile,
+                // Ensure numeric values are properly handled
+                all_time_profit_loss: friendProfile.all_time_profit_loss || 0,
+                games_played: friendProfile.games_played || 0,
+                total_wins: friendProfile.total_wins || 0,
+              },
+              created_at: friendship.created_at,
+            }
+          })
+          .filter(Boolean) || []
+
+      // Deduplicate friends based on friend_id
+      const uniqueFriends = Array.from(new Map(transformedFriends.map((friend) => [friend.friend_id, friend])).values())
+
+      console.log(`✅ Loaded ${uniqueFriends.length} friends`)
+      setFriends(uniqueFriends)
+    } catch (error) {
+      console.error("Error loading friends:", error)
+      setError("Failed to load friends. Please check your connection and try again.")
+    } finally {
+      setLoading(false)
+    }
+  }, [user])
+
+  const loadFriendRequestsData = useCallback(async () => {
+    if (!user) return
+
+    try {
       // Load friend requests (received)
       const { data: requestsData, error: requestsError } = await supabase
         .from("friend_requests")
@@ -209,16 +215,20 @@ const FriendsPage: React.FC = () => {
       setSentRequests(sentData || [])
       console.log("✅ Loaded sent requests:", (sentData || []).length)
     } catch (error) {
-      console.error("❌ Error in loadFriendsData:", error)
-      setError("Failed to load friends data. Please try again.")
-    } finally {
-      setLoading(false)
+      console.error("❌ Error in loadFriendRequestsData:", error)
+      setError("Failed to load friend requests data. Please try again.")
     }
   }, [user])
 
+  const refreshFriendsData = async () => {
+    setLoading(true)
+    await Promise.all([fetchFriends(), loadFriendRequestsData()])
+  }
+
   useEffect(() => {
-    loadFriendsData()
-  }, [loadFriendsData])
+    fetchFriends()
+    loadFriendRequestsData()
+  }, [fetchFriends, loadFriendRequestsData])
 
   const getInitials = (fullName: string, email: string): string => {
     if (fullName && fullName.trim()) {
@@ -287,7 +297,7 @@ const FriendsPage: React.FC = () => {
       setSearchResults((prev) => prev.filter((u) => u.id !== receiverId))
 
       // Refresh data to update sent requests
-      await loadFriendsData()
+      await loadFriendRequestsData()
     } catch (error) {
       console.error("Error sending friend request:", error)
       setError("Failed to send friend request. Please try again.")
@@ -321,7 +331,8 @@ const FriendsPage: React.FC = () => {
       setSuccess("Friend request accepted!")
 
       // Refresh data
-      await loadFriendsData()
+      await fetchFriends()
+      await loadFriendRequestsData()
     } catch (error) {
       console.error("Error accepting friend request:", error)
       setError("Failed to accept friend request. Please try again.")
@@ -341,7 +352,7 @@ const FriendsPage: React.FC = () => {
       setSuccess("Friend request rejected.")
 
       // Refresh data
-      await loadFriendsData()
+      await loadFriendRequestsData()
     } catch (error) {
       console.error("Error rejecting friend request:", error)
       setError("Failed to reject friend request. Please try again.")
@@ -366,7 +377,7 @@ const FriendsPage: React.FC = () => {
       setSuccess("Friend removed successfully.")
 
       // Refresh data
-      await loadFriendsData()
+      await fetchFriends()
     } catch (error) {
       console.error("Error removing friend:", error)
       setError("Failed to remove friend. Please try again.")
@@ -391,20 +402,43 @@ const FriendsPage: React.FC = () => {
     <Card>
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-semibold text-white">My Friends ({friends.length})</h2>
-        <Button
-          onClick={() => {
-            setShowAddFriendModal(true)
-            setSearchEmail("")
-            setSearchResults([])
-            setError("")
-            setSuccess("")
-          }}
-          variant="primary"
-          size="sm"
-        >
-          Add Friend
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refreshFriendsData}
+            disabled={loading}
+            className="border-green-600 text-green-400 hover:bg-green-600/20 bg-transparent"
+          >
+            {loading ? "Loading..." : "Refresh"}
+          </Button>
+          <Button
+            onClick={() => {
+              setShowAddFriendModal(true)
+              setSearchEmail("")
+              setSearchResults([])
+              setError("")
+            }}
+            className="bg-green-600 hover:bg-green-700 text-white"
+          >
+            Add Friend
+          </Button>
+        </div>
       </div>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-900/50 border border-red-600 rounded-lg">
+          <p className="text-red-400 text-sm">{error}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refreshFriendsData}
+            className="mt-2 border-red-600 text-red-400 hover:bg-red-600/20 bg-transparent"
+          >
+            Try Again
+          </Button>
+        </div>
+      )}
 
       {friends.length === 0 ? (
         <div className="text-center py-12">
@@ -426,36 +460,64 @@ const FriendsPage: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {friends.map((friend) => (
-            <div
-              key={friend.id}
-              className="bg-slate-700/50 backdrop-blur-sm p-4 rounded-lg border border-slate-600 hover:border-green-500/50 transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
-                    {getInitials(friend.friend_profile.full_name, friend.friend_profile.email)}
+          {friends.map((friend) => {
+            const gamesPlayed = friend.friend_profile.games_played || 0
+            const totalWins = friend.friend_profile.total_wins || 0
+            const profitLoss = friend.friend_profile.all_time_profit_loss || 0
+            const winRate = gamesPlayed > 0 ? ((totalWins / gamesPlayed) * 100).toFixed(1) : "0.0"
+
+            return (
+              <div
+                key={friend.id}
+                className="bg-slate-700/50 backdrop-blur-sm p-4 rounded-lg border border-slate-600 hover:border-green-500/50 transition-colors"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                      {getInitials(friend.friend_profile.full_name, friend.friend_profile.email)}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-white font-medium">{friend.friend_profile.full_name}</p>
+                      <p className="text-gray-400 text-sm">{friend.friend_profile.email}</p>
+                      <p className="text-gray-500 text-xs mb-2">
+                        Friends since {new Date(friend.created_at).toLocaleDateString()}
+                      </p>
+
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <div className="bg-slate-800/50 rounded px-2 py-1">
+                          <p className="text-xs text-gray-400">P/L</p>
+                          <p className={`text-sm font-medium ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/50 rounded px-2 py-1">
+                          <p className="text-xs text-gray-400">Games</p>
+                          <p className="text-sm font-medium text-white">{gamesPlayed}</p>
+                        </div>
+                        <div className="bg-slate-800/50 rounded px-2 py-1">
+                          <p className="text-xs text-gray-400">Wins</p>
+                          <p className="text-sm font-medium text-blue-400">{totalWins}</p>
+                        </div>
+                        <div className="bg-slate-800/50 rounded px-2 py-1">
+                          <p className="text-xs text-gray-400">Win Rate</p>
+                          <p className="text-sm font-medium text-purple-400">{winRate}%</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-white font-medium">{friend.friend_profile.full_name}</p>
-                    <p className="text-gray-400 text-sm">{friend.friend_profile.email}</p>
-                    <p className="text-gray-500 text-xs">
-                      Friends since {new Date(friend.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
+                  <Button
+                    onClick={() => removeFriend(friend.friend_id)}
+                    variant="ghost"
+                    size="sm"
+                    disabled={actionLoading[friend.friend_id]}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-900/20 ml-2"
+                  >
+                    {actionLoading[friend.friend_id] ? "..." : "Remove"}
+                  </Button>
                 </div>
-                <Button
-                  onClick={() => removeFriend(friend.friend_id)}
-                  variant="ghost"
-                  size="sm"
-                  disabled={actionLoading[friend.friend_id]}
-                  className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
-                >
-                  {actionLoading[friend.friend_id] ? "..." : "Remove"}
-                </Button>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </Card>

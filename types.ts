@@ -43,7 +43,7 @@ export interface GameSession {
   isOwner?: boolean // Track if the current user owns this game
 }
 
-export type View = "dashboard" | "activeGame" | "friends"
+export type View = "dashboard" | "activeGame" | "friends" | "stats"
 
 export interface GameResult {
   gameId: string
