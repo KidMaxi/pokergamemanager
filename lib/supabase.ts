@@ -4,7 +4,7 @@ import type { Database } from "./database.types"
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
-// Client-side Supabase client (singleton pattern) with persistent session
+// Client-side Supabase client (singleton pattern)
 let supabaseClient: ReturnType<typeof createClient<Database>> | null = null
 
 export const createClientComponentClient = () => {
@@ -13,12 +13,6 @@ export const createClientComponentClient = () => {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: true,
-        // Prevent automatic logout by extending session duration
-        storage: typeof window !== "undefined" ? window.localStorage : undefined,
-        storageKey: "supabase.auth.token",
-        // Keep session alive longer
-        flowType: "pkce",
       },
     })
   }
@@ -45,15 +39,4 @@ export const createAdminClient = () => {
   })
 }
 
-// Main client with persistent session settings
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    // Prevent automatic logout
-    storage: typeof window !== "undefined" ? window.localStorage : undefined,
-    storageKey: "supabase.auth.token",
-    flowType: "pkce",
-  },
-})
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
