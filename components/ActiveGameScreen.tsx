@@ -153,6 +153,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         cashOutAmount: 0,
         cashOutLog: [],
         status: "active",
+        hasCashedOut: false,
       }
 
       const updatedPlayersInGame = [...localSession.playersInGame, newPlayerInGame]
@@ -259,6 +260,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             (player.pointStack - amount) * (localSession.pointValue || 0.1) +
             dollarValue -
             (player.totalBuyInAmount || 0),
+          hasCashedOut: true,
         }
       }
       return player
@@ -279,8 +281,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const handleEndGame = () => {
-    // Validate that all final chip amounts are filled and >= 0
+    const activePlayersOnly = localSession.playersInGame.filter((player) => !player.hasCashedOut)
     const invalidAmounts = Object.entries(finalChipAmounts).filter(([playerId, amount]) => {
+      // Only check amounts for active players
+      const isActivePlayer = activePlayersOnly.some((p) => p.playerId === playerId)
+      if (!isActivePlayer) return false
+
       const numAmount = Number.parseFloat(amount)
       return isNaN(numAmount) || numAmount < 0
     })
@@ -290,8 +296,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       return
     }
 
-    // Update players with final chip amounts
     const updatedPlayersInGame = localSession.playersInGame.map((player) => {
+      if (player.hasCashedOut) {
+        // Keep cashed out players unchanged
+        return player
+      }
+
       const finalAmount = Number.parseFloat(finalChipAmounts[player.playerId] || "0")
       return {
         ...player,
@@ -308,8 +318,60 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       currentPhysicalPointsOnTable: calculatePhysicalPoints(updatedPlayersInGame),
     }
 
+    updatePlayerStatistics(finalSession)
+
     onEndGame(finalSession)
     setShowEndGameModal(false)
+  }
+
+  const updatePlayerStatistics = async (finalSession: GameSession) => {
+    try {
+      for (const player of finalSession.playersInGame) {
+        if (player.profileId) {
+          const totalBuyIn = getPlayerTotalBuyIn(player)
+          const profitLoss = getPlayerProfitLoss(player)
+          const isWinner = profitLoss > 0
+
+          // Update player's statistics in the database
+          await supabase
+            .from("profiles")
+            .update({
+              games_played: supabase.raw("games_played + 1"),
+              total_wins: isWinner ? supabase.raw("total_wins + 1") : supabase.raw("total_wins"),
+              all_time_profit_loss: supabase.raw(`all_time_profit_loss + ${profitLoss}`),
+            })
+            .eq("id", player.profileId)
+        }
+      }
+    } catch (error) {
+      console.error("Error updating player statistics:", error)
+    }
+  }
+
+  const calculatePhysicalPointsForActivePlayers = (playersInGame: PlayerInGame[]): number => {
+    return playersInGame.reduce((total, player) => {
+      if (player.status === "active" && !player.hasCashedOut) {
+        return total + player.pointStack
+      }
+      return total
+    }, 0)
+  }
+
+  const calculateTotalBuyInsForActivePlayers = (playersInGame: PlayerInGame[]): number => {
+    return playersInGame.reduce((total, player) => {
+      if (!player.hasCashedOut) {
+        return total + player.buyIns.reduce((playerTotal, buyIn) => playerTotal + buyIn.amount, 0)
+      }
+      return total
+    }, 0)
+  }
+
+  const calculateCurrentPotForActivePlayers = (playersInGame: PlayerInGame[]): number => {
+    const totalBuyIns = calculateTotalBuyInsForActivePlayers(playersInGame)
+    const totalCashOuts = playersInGame.reduce((total, player) => {
+      return total + (player.cashOutAmount || 0)
+    }, 0)
+    return totalBuyIns - totalCashOuts
   }
 
   const getPlayerTotalBuyIn = (player: PlayerInGame): number => {
@@ -318,13 +380,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
   const getPlayerProfitLoss = (player: PlayerInGame): number => {
     const totalBuyIn = getPlayerTotalBuyIn(player)
-    // Convert points to dollar value based on game rate
-    const pointValue = player.pointStack * (localSession.pointValue || 0.1)
-    return pointValue - totalBuyIn
+    return (player.cashOutAmount || 0) - totalBuyIn
   }
 
-  const activePlayers = localSession.playersInGame.filter((p) => p.status === "active")
-  const cashedOutPlayers = localSession.playersInGame.filter((p) => p.status === "cashed_out_early")
+  const activePlayers = localSession.playersInGame.filter((p) => p.status === "active" && !p.hasCashedOut)
+  const cashedOutPlayers = localSession.playersInGame.filter((p) => p.hasCashedOut)
 
   const isFriendWithPlayer = (playerId: string): boolean => {
     return userFriends?.includes(playerId) || false
@@ -353,6 +413,14 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     } finally {
       setLoading(false)
     }
+  }
+
+  const getTotalChipsInFinalStandings = (): number => {
+    const activePlayersOnly = localSession.playersInGame.filter((player) => !player.hasCashedOut)
+    return activePlayersOnly.reduce((total, player) => {
+      const finalAmount = Number.parseFloat(finalChipAmounts[player.playerId] || "0")
+      return total + finalAmount
+    }, 0)
   }
 
   return (
@@ -491,6 +559,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                       setShowBuyInModal(true)
                     }}
                     className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium transition-colors"
+                    disabled={player.hasCashedOut}
                   >
                     Buy-in
                   </button>
@@ -500,7 +569,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                       setShowCashOutModal(true)
                     }}
                     className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded font-medium transition-colors"
-                    disabled={player.pointStack <= 0}
+                    disabled={player.hasCashedOut || player.pointStack <= 0}
                   >
                     Cash Out
                   </button>
@@ -557,62 +626,74 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           isOpen={showBuyInModal}
           onClose={() => {
             setShowBuyInModal(false)
-            setSelectedPlayer(null)
             setBuyInAmount("")
+            setSelectedPlayer(null)
             setError("")
           }}
           title={`Buy-in for ${selectedPlayer?.name}`}
         >
           <div className="space-y-4">
-            <div className="mb-4">
-              <p className="text-gray-400 text-sm mb-2">Quick amounts:</p>
-              <div className="grid grid-cols-3 gap-2">
-                {[25, 50, 100].map((preset) => (
-                  <button
-                    key={preset}
-                    onClick={() => setBuyInAmount(preset.toString())}
-                    className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-sm transition-colors"
-                  >
-                    ${preset}
-                  </button>
-                ))}
+            {selectedPlayer?.hasCashedOut ? (
+              <div className="text-center py-8">
+                <p className="text-red-400 text-lg font-semibold">Player has cashed out</p>
+                <p className="text-gray-400 mt-2">Cashed out players cannot make additional buy-ins</p>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <button
+                    onClick={() => setBuyInAmount("25")}
+                    className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg"
+                  >
+                    $25
+                  </button>
+                  <button
+                    onClick={() => setBuyInAmount("50")}
+                    className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg"
+                  >
+                    $50
+                  </button>
+                  <button
+                    onClick={() => setBuyInAmount("100")}
+                    className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg"
+                  >
+                    $100
+                  </button>
+                </div>
 
-            <div className="mb-4">
-              <label className="block text-gray-400 text-sm mb-2">Custom Amount ($)</label>
-              <input
-                type="number"
-                value={buyInAmount}
-                onChange={(e) => setBuyInAmount(e.target.value)}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white focus:border-green-500 focus:outline-none"
-                placeholder="Enter amount"
-                min="0"
-                step="0.01"
-              />
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Buy-in Amount ($)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={buyInAmount}
+                    onChange={(e) => setBuyInAmount(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg"
+                    placeholder="Enter amount"
+                  />
+                </div>
 
-            {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+                {error && <p className="text-red-400 text-sm">{error}</p>}
 
-            <div className="flex space-x-3">
-              <button
-                onClick={handleBuyIn}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-medium transition-colors"
-              >
-                Confirm Buy-in
-              </button>
-              <button
-                onClick={() => {
-                  setShowBuyInModal(false)
-                  setBuyInAmount("")
-                  setSelectedPlayer(null)
-                  setError("")
-                }}
-                className="flex-1 bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded font-medium transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
+                <div className="flex space-x-4">
+                  <Button
+                    onClick={() => {
+                      setShowBuyInModal(false)
+                      setBuyInAmount("")
+                      setSelectedPlayer(null)
+                      setError("")
+                    }}
+                    variant="ghost"
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={handleBuyIn} disabled={loading}>
+                    {loading ? "Processing..." : "Buy-in"}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
 
@@ -624,39 +705,55 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             setSelectedPlayer(null)
             setError("")
           }}
-          title={`Cash Out - ${selectedPlayer?.name}`}
+          title={`Cash Out for ${selectedPlayer?.name}`}
         >
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Cash Out Amount (Points)</label>
-              <input
-                type="number"
-                value={cashOutAmount}
-                onChange={(e) => setCashOutAmount(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white"
-                placeholder="Enter points to cash out"
-                min="0"
-                max={selectedPlayer?.pointStack || 0}
-              />
-              <p className="text-sm text-gray-400 mt-1">Current points: {selectedPlayer?.pointStack || 0}</p>
-            </div>
-            {error && <p className="text-red-400 text-sm">{error}</p>}
-            <div className="flex justify-end gap-2">
-              <Button
-                onClick={() => {
-                  setShowCashOutModal(false)
-                  setCashOutAmount("")
-                  setSelectedPlayer(null)
-                  setError("")
-                }}
-                variant="ghost"
-              >
-                Cancel
-              </Button>
-              <Button onClick={handleCashOut} disabled={loading}>
-                {loading ? "Processing..." : "Cash Out"}
-              </Button>
-            </div>
+            {selectedPlayer?.hasCashedOut ? (
+              <div className="text-center py-8">
+                <p className="text-red-400 text-lg font-semibold">Player has already cashed out</p>
+                <p className="text-gray-400 mt-2">This player cannot cash out again</p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <p className="text-sm text-gray-400 mb-2">Current Points: {selectedPlayer?.pointStack || 0}</p>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Max Cash Out: {localSession.currentPhysicalPointsOnTable} points ($
+                    {(localSession.currentPhysicalPointsOnTable * (localSession.pointValue || 0.1)).toFixed(2)})
+                  </p>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Cash Out Amount (Points)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={localSession.currentPhysicalPointsOnTable}
+                    step="1"
+                    value={cashOutAmount}
+                    onChange={(e) => setCashOutAmount(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg"
+                    placeholder="Enter points to cash out"
+                  />
+                </div>
+
+                {error && <p className="text-red-400 text-sm">{error}</p>}
+
+                <div className="flex space-x-4">
+                  <Button
+                    onClick={() => {
+                      setShowCashOutModal(false)
+                      setCashOutAmount("")
+                      setSelectedPlayer(null)
+                      setError("")
+                    }}
+                    variant="ghost"
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={handleCashOut} disabled={loading}>
+                    {loading ? "Processing..." : "Cash Out"}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
 
@@ -665,77 +762,133 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
               <h2 className="text-2xl font-bold mb-4 text-green-400">Payment Settlement</h2>
-              <p className="text-gray-300 mb-6">Enter the final chip amount for each player (must be ≥ 0):</p>
+              <p className="text-gray-300 mb-4">Enter the final chip amount for each active player (must be ≥ 0):</p>
+
+              <div className="bg-gray-700 p-4 rounded-lg mb-6">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300">Total Chips in Play:</span>
+                  <span className="text-white font-bold">
+                    {calculatePhysicalPointsForActivePlayers(localSession.playersInGame)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center mt-2">
+                  <span className="text-gray-300">Total Entered:</span>
+                  <span
+                    className={`font-bold ${getTotalChipsInFinalStandings() === calculatePhysicalPointsForActivePlayers(localSession.playersInGame) ? "text-green-400" : "text-red-400"}`}
+                  >
+                    {getTotalChipsInFinalStandings()}
+                  </span>
+                </div>
+                {getTotalChipsInFinalStandings() !==
+                  calculatePhysicalPointsForActivePlayers(localSession.playersInGame) && (
+                  <p className="text-red-400 text-sm mt-2">⚠️ Total entered doesn't match chips in play</p>
+                )}
+              </div>
 
               <div className="space-y-4 mb-6">
-                {localSession.playersInGame.map((player) => (
-                  <div key={player.playerId} className="flex items-center justify-between bg-gray-700 p-4 rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white font-bold">
-                        {getInitials(player.name)}
+                {localSession.playersInGame
+                  .filter((player) => !player.hasCashedOut)
+                  .map((player) => (
+                    <div key={player.playerId} className="flex items-center justify-between bg-gray-700 p-4 rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white font-bold">
+                          {getInitials(player.name)}
+                        </div>
+                        <div>
+                          <p className="font-semibold">{player.name}</p>
+                          <p className="text-sm text-gray-400">Buy-in: ${getPlayerTotalBuyIn(player).toFixed(2)}</p>
+                          <p className="text-sm text-gray-400">Current: {player.pointStack} chips</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-semibold">{player.name}</p>
-                        <p className="text-sm text-gray-400">Buy-in: ${getPlayerTotalBuyIn(player).toFixed(2)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      <div className="text-right">
-                        <p className="text-sm text-gray-400">Final Chips:</p>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={finalChipAmounts[player.playerId] || ""}
-                          onChange={(e) =>
-                            setFinalChipAmounts((prev) => ({
-                              ...prev,
-                              [player.playerId]: e.target.value,
-                            }))
-                          }
-                          className="w-24 px-2 py-1 bg-gray-600 text-white rounded text-center"
-                          placeholder="0"
-                        />
-                      </div>
-                      <div className="text-right min-w-[80px]">
-                        <p className="text-sm text-gray-400">P/L:</p>
-                        <p
-                          className={`font-bold ${
-                            (
+                      <div className="flex items-center space-x-4">
+                        <div className="text-right">
+                          <p className="text-sm text-gray-400">Final Chips:</p>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={finalChipAmounts[player.playerId] || ""}
+                            onChange={(e) =>
+                              setFinalChipAmounts((prev) => ({
+                                ...prev,
+                                [player.playerId]: e.target.value,
+                              }))
+                            }
+                            className="w-24 px-2 py-1 bg-gray-600 text-white rounded text-center"
+                            placeholder={player.pointStack.toString()}
+                          />
+                        </div>
+                        <div className="text-right min-w-[80px]">
+                          <p className="text-sm text-gray-400">P/L:</p>
+                          <p
+                            className={`font-bold ${
+                              (
+                                Number.parseFloat(finalChipAmounts[player.playerId] || "0") *
+                                  (localSession.pointValue || 0.1) -
+                                  getPlayerTotalBuyIn(player)
+                              ) >= 0
+                                ? "text-green-400"
+                                : "text-red-400"
+                            }`}
+                          >
+                            $
+                            {(
                               Number.parseFloat(finalChipAmounts[player.playerId] || "0") *
                                 (localSession.pointValue || 0.1) -
-                                getPlayerTotalBuyIn(player)
-                            ) >= 0
-                              ? "text-green-400"
-                              : "text-red-400"
-                          }`}
-                        >
-                          $
-                          {(
-                            Number.parseFloat(finalChipAmounts[player.playerId] || "0") *
-                              (localSession.pointValue || 0.1) -
-                            getPlayerTotalBuyIn(player)
-                          ).toFixed(2)}
-                        </p>
+                              getPlayerTotalBuyIn(player)
+                            ).toFixed(2)}
+                          </p>
+                        </div>
                       </div>
                     </div>
+                  ))}
+
+                {localSession.playersInGame.filter((player) => player.hasCashedOut).length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-lg font-semibold text-gray-300 mb-3">Cashed Out Players (Final)</h3>
+                    {localSession.playersInGame
+                      .filter((player) => player.hasCashedOut)
+                      .map((player) => (
+                        <div
+                          key={player.playerId}
+                          className="flex items-center justify-between bg-gray-600 p-4 rounded-lg opacity-75"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 bg-gray-500 rounded-full flex items-center justify-center text-white font-bold">
+                              {getInitials(player.name)}
+                            </div>
+                            <div>
+                              <p className="font-semibold">{player.name} (Cashed Out)</p>
+                              <p className="text-sm text-gray-400">Buy-in: ${getPlayerTotalBuyIn(player).toFixed(2)}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm text-gray-400">Final P/L:</p>
+                            <p
+                              className={`font-bold ${getPlayerProfitLoss(player) >= 0 ? "text-green-400" : "text-red-400"}`}
+                            >
+                              ${getPlayerProfitLoss(player).toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                   </div>
-                ))}
+                )}
               </div>
 
               <div className="flex space-x-4">
-                <button
+                <Button
                   onClick={() => setShowEndGameModal(false)}
                   className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={handleEndGame}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg"
                 >
                   End Game
-                </button>
+                </Button>
               </div>
             </div>
           </div>
