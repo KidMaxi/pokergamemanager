@@ -423,6 +423,67 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     }, 0)
   }
 
+  const handleEditBuyIn = async (playerId: string, buyInIndex: number, newAmount: number) => {
+    if (!user || !localSession) return
+
+    try {
+      const updatedPlayers = localSession.playersInGame.map((player) => {
+        if (player.id === playerId) {
+          const updatedBuyIns = [...player.buyIns]
+          const oldAmount = updatedBuyIns[buyInIndex].amount
+          updatedBuyIns[buyInIndex] = {
+            ...updatedBuyIns[buyInIndex],
+            amount: newAmount,
+          }
+
+          // Update point stack based on difference
+          const pointDifference = (newAmount - oldAmount) / (localSession.pointToCashRate || 0.1)
+
+          return {
+            ...player,
+            buyIns: updatedBuyIns,
+            pointStack: player.pointStack + pointDifference,
+          }
+        }
+        return player
+      })
+
+      setLocalSession({ ...localSession, playersInGame: updatedPlayers })
+      await updateSession({ ...localSession, playersInGame: updatedPlayers })
+    } catch (error) {
+      console.error("Error editing buy-in:", error)
+    }
+  }
+
+  const handleDeleteBuyIn = async (playerId: string, buyInIndex: number) => {
+    if (!user || !localSession) return
+
+    try {
+      const updatedPlayers = localSession.playersInGame.map((player) => {
+        if (player.id === playerId) {
+          const updatedBuyIns = [...player.buyIns]
+          const deletedAmount = updatedBuyIns[buyInIndex].amount
+          updatedBuyIns.splice(buyInIndex, 1)
+
+          // Update point stack by removing deleted buy-in points
+          const pointsToRemove = deletedAmount / (localSession.pointToCashRate || 0.1)
+
+          return {
+            ...player,
+            buyIns: updatedBuyIns,
+            pointStack: Math.max(0, player.pointStack - pointsToRemove),
+          }
+        }
+        return player
+      })
+
+      setLocalSession({ ...localSession, playersInGame: updatedPlayers })
+      await updateSession({ ...localSession, playersInGame: updatedPlayers })
+    } catch (error) {
+      console.error("Error deleting buy-in:", error)
+    }
+  }
+
   return (
     <div
       className="min-h-screen text-white p-4"
@@ -490,90 +551,147 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         )}
 
         {/* Players */}
-        <div className="space-y-4">
+        <div className="grid gap-4 md:gap-6">
           {localSession.playersInGame.map((player) => {
-            const isActive = player.pointStack > 0
-            const isFriend = isFriendWithPlayer(player.playerId)
-            const totalBuyIn = getPlayerTotalBuyIn(player)
+            const totalBuyIn = player.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
             const profitLoss = getPlayerProfitLoss(player)
-            const isCurrentUser = user?.id === player.playerId
+            const isHost = player.id === user?.id
 
             return (
               <div
-                key={player.playerId}
-                className="bg-slate-700/50 backdrop-blur-sm rounded-lg p-4 border border-slate-600 hover:border-green-500/50 transition-colors"
+                key={player.id}
+                className={`bg-slate-800/30 backdrop-blur-sm rounded-lg p-4 md:p-6 border border-slate-700/50 ${
+                  player.hasCashedOut ? "opacity-60 blur-[2px]" : ""
+                }`}
               >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0">
-                      {getInitials(player.name, "")}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white font-semibold">
+                      {getInitials(player.name)}
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center space-x-2">
-                        <h3 className="text-white font-medium truncate">{player.name}</h3>
-                        {isCurrentUser && (
-                          <span className="text-xs bg-green-600 text-white px-2 py-1 rounded">HOST</span>
+                    <div>
+                      <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                        {player.name}
+                        {isHost && <span className="text-xs bg-green-600 px-2 py-1 rounded">HOST</span>}
+                        {player.hasCashedOut && (
+                          <span className="text-xs bg-red-600 px-2 py-1 rounded">CASHED OUT</span>
                         )}
-                        {isFriend ? (
-                          <CheckIcon className="w-5 h-5 text-green-400 flex-shrink-0" />
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        {userFriends?.some((friend) => friend.id === player.id) ? (
+                          <CheckIcon className="w-4 h-4 text-green-400" />
                         ) : (
                           <button
-                            onClick={() => handleSendFriendRequest(player.playerId)}
-                            className="w-5 h-5 text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0"
+                            onClick={() => handleSendFriendRequest(player.id)}
+                            className="hover:bg-slate-700 p-1 rounded"
                           >
-                            <UserIcon className="w-5 h-5" />
+                            <UserIcon className="w-4 h-4 text-blue-400" />
                           </button>
                         )}
                       </div>
                     </div>
                   </div>
+                </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4 text-center">
-                    <div className="bg-slate-800/50 rounded px-2 py-1">
-                      <p className="text-xs text-gray-400">Points</p>
-                      <p className="text-sm font-medium text-white">{player.pointStack}</p>
-                    </div>
-                    <div className="bg-slate-800/50 rounded px-2 py-1">
-                      <p className="text-xs text-gray-400">Buy-ins</p>
-                      <p className="text-sm font-medium text-white">
-                        ${totalBuyIn.toFixed(2)} ({player.buyIns.length})
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/50 rounded px-2 py-1">
-                      <p className="text-xs text-gray-400">Cash-outs</p>
-                      <p className="text-sm font-medium text-white">${(player.cashOutAmount || 0).toFixed(2)}</p>
-                    </div>
-                    <div className="bg-slate-800/50 rounded px-2 py-1">
-                      <p className="text-xs text-gray-400">P/L</p>
-                      <p className={`text-sm font-medium ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                        {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
-                      </p>
-                    </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-slate-800/50 rounded px-2 py-1">
+                    <p className="text-xs text-gray-400">Points</p>
+                    <p className="text-lg font-bold text-white">{player.pointStack}</p>
+                  </div>
+                  <div className="bg-slate-800/50 rounded px-2 py-1">
+                    <p className="text-xs text-gray-400">Buy-ins</p>
+                    <p className="text-sm font-medium text-white">
+                      ${totalBuyIn.toFixed(2)} ({player.buyIns.length})
+                    </p>
+                  </div>
+                  <div className="bg-slate-800/50 rounded px-2 py-1">
+                    <p className="text-xs text-gray-400">Cash-outs</p>
+                    <p className="text-sm font-medium text-white">${(player.cashOutAmount || 0).toFixed(2)}</p>
+                  </div>
+                  <div className="bg-slate-800/50 rounded px-2 py-1">
+                    <p className="text-xs text-gray-400">P/L</p>
+                    <p className={`text-sm font-medium ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
+                    </p>
                   </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-2 mt-4">
-                  <button
-                    onClick={() => {
-                      setSelectedPlayer(player)
-                      setShowBuyInModal(true)
-                    }}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium transition-colors"
-                    disabled={player.hasCashedOut}
-                  >
-                    Buy-in
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSelectedPlayer(player)
-                      setShowCashOutModal(true)
-                    }}
-                    className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded font-medium transition-colors"
-                    disabled={player.hasCashedOut || player.pointStack <= 0}
-                  >
-                    Cash Out
-                  </button>
-                </div>
+                {player.buyIns.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-sm font-medium text-gray-300 mb-2">Buy-ins:</h4>
+                    <div className="space-y-2">
+                      {player.buyIns.map((buyIn, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between bg-slate-700/30 rounded px-3 py-2"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-white">${buyIn.amount.toFixed(2)}</span>
+                            <span className="text-xs text-gray-400">
+                              {new Date(buyIn.time).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          {isHost && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  const newAmount = prompt("Enter new buy-in amount:", buyIn.amount.toString())
+                                  if (newAmount && !isNaN(Number.parseFloat(newAmount))) {
+                                    handleEditBuyIn(player.id, index, Number.parseFloat(newAmount))
+                                  }
+                                }}
+                                className="text-blue-400 hover:text-blue-300 p-1"
+                                title="Edit buy-in"
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm("Are you sure you want to delete this buy-in?")) {
+                                    handleDeleteBuyIn(player.id, index)
+                                  }
+                                }}
+                                className="text-red-400 hover:text-red-300 p-1"
+                                title="Delete buy-in"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {isHost && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setSelectedPlayer(player)
+                        setBuyInAmount("")
+                        setShowBuyInModal(true)
+                      }}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium transition-colors"
+                      disabled={player.hasCashedOut}
+                    >
+                      Buy-in
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedPlayer(player)
+                        setShowCashOutModal(true)
+                      }}
+                      className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded font-medium transition-colors"
+                      disabled={player.hasCashedOut || player.pointStack <= 0}
+                    >
+                      Cash Out
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}
