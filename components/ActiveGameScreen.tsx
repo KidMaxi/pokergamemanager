@@ -107,6 +107,20 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     }, 0)
   }
 
+  const calculateTotalBuyIns = (playersInGame: PlayerInGame[]): number => {
+    return playersInGame.reduce((total, player) => {
+      return total + player.buyIns.reduce((playerTotal, buyIn) => playerTotal + buyIn.amount, 0)
+    }, 0)
+  }
+
+  const calculateCurrentPot = (playersInGame: PlayerInGame[]): number => {
+    const totalBuyIns = calculateTotalBuyIns(playersInGame)
+    const totalCashOuts = playersInGame.reduce((total, player) => {
+      return total + (player.cashOutAmount || 0)
+    }, 0)
+    return totalBuyIns - totalCashOuts
+  }
+
   const handleAddPlayer = async () => {
     if (!newPlayerName.trim()) {
       setError("Player name cannot be empty")
@@ -145,8 +159,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       const updatedSession = {
         ...localSession,
         playersInGame: updatedPlayersInGame,
-        totalBuyIns: (localSession.totalBuyIns || 0) + localSession.standardBuyInAmount,
-        currentPot: (localSession.currentPot || 0) + localSession.standardBuyInAmount,
+        totalBuyIns: calculateTotalBuyIns(updatedPlayersInGame),
+        currentPot: calculateCurrentPot(updatedPlayersInGame),
         currentPhysicalPointsOnTable: calculatePhysicalPoints(updatedPlayersInGame),
       }
 
@@ -197,8 +211,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     const updatedSession = {
       ...localSession,
       playersInGame: updatedPlayersInGame,
-      totalBuyIns: (localSession.totalBuyIns || 0) + amount,
-      currentPot: (localSession.currentPot || 0) + amount, // Current pot increases with buy-ins
+      totalBuyIns: calculateTotalBuyIns(updatedPlayersInGame),
+      currentPot: calculateCurrentPot(updatedPlayersInGame),
       currentPhysicalPointsOnTable: calculatePhysicalPoints(updatedPlayersInGame),
     }
 
@@ -253,7 +267,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     const updatedSession = {
       ...localSession,
       playersInGame: updatedPlayersInGame,
-      currentPot: Math.max(0, (localSession.currentPot || 0) - dollarValue),
+      currentPot: Math.max(0, calculateCurrentPot(updatedPlayersInGame)),
       currentPhysicalPointsOnTable: calculatePhysicalPoints(updatedPlayersInGame),
     }
 
@@ -272,7 +286,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     })
 
     if (invalidAmounts.length > 0) {
-      setError("All final chip amounts must be filled and >= 0")
+      setError("All final chip amounts must be filled and ≥ 0")
       return
     }
 
@@ -378,11 +392,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="bg-gray-800/80 backdrop-blur-sm rounded-lg p-4 text-center">
             <p className="text-gray-400 mb-1">Total Buy-ins</p>
-            <p className="text-2xl font-bold">${localSession.totalBuyIns || 0}</p>
+            <p className="text-2xl font-bold">${calculateTotalBuyIns(localSession.playersInGame || [])}</p>
           </div>
           <div className="bg-gray-800/80 backdrop-blur-sm rounded-lg p-4 text-center">
             <p className="text-gray-400 mb-1">Current Pot</p>
-            <p className="text-2xl font-bold">${localSession.currentPot || 0}</p>
+            <p className="text-2xl font-bold">${calculateCurrentPot(localSession.playersInGame || [])}</p>
           </div>
           <div className="bg-gray-800/80 backdrop-blur-sm rounded-lg p-4 text-center">
             <p className="text-gray-400 mb-1">Points in Play</p>
