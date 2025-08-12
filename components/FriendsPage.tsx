@@ -459,7 +459,7 @@ const FriendsPage: React.FC = () => {
           </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {friends.map((friend) => {
             const gamesPlayed = friend.friend_profile.games_played || 0
             const totalWins = friend.friend_profile.total_wins || 0
@@ -471,49 +471,46 @@ const FriendsPage: React.FC = () => {
                 key={friend.id}
                 className="bg-slate-700/50 backdrop-blur-sm p-4 rounded-lg border border-slate-600 hover:border-green-500/50 transition-colors"
               >
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col space-y-3">
                   <div className="flex items-start space-x-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                    <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0">
                       {getInitials(friend.friend_profile.full_name, friend.friend_profile.email)}
                     </div>
-                    <div className="flex-1">
-                      <p className="text-white font-medium">{friend.friend_profile.full_name}</p>
-                      <p className="text-gray-400 text-sm">{friend.friend_profile.email}</p>
-                      <p className="text-gray-500 text-xs mb-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-white font-medium truncate">{friend.friend_profile.full_name}</p>
+                      <p className="text-gray-400 text-sm truncate">{friend.friend_profile.email}</p>
+                      <p className="text-gray-500 text-xs">
                         Friends since {new Date(friend.created_at).toLocaleDateString()}
                       </p>
+                    </div>
+                    <button
+                      onClick={() => removeFriend(friend.friend_id)}
+                      className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors flex-shrink-0"
+                    >
+                      Remove
+                    </button>
+                  </div>
 
-                      <div className="grid grid-cols-2 gap-2 mt-2">
-                        <div className="bg-slate-800/50 rounded px-2 py-1">
-                          <p className="text-xs text-gray-400">P/L</p>
-                          <p className={`text-sm font-medium ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                            {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
-                          </p>
-                        </div>
-                        <div className="bg-slate-800/50 rounded px-2 py-1">
-                          <p className="text-xs text-gray-400">Games</p>
-                          <p className="text-sm font-medium text-white">{gamesPlayed}</p>
-                        </div>
-                        <div className="bg-slate-800/50 rounded px-2 py-1">
-                          <p className="text-xs text-gray-400">Wins</p>
-                          <p className="text-sm font-medium text-blue-400">{totalWins}</p>
-                        </div>
-                        <div className="bg-slate-800/50 rounded px-2 py-1">
-                          <p className="text-xs text-gray-400">Win Rate</p>
-                          <p className="text-sm font-medium text-purple-400">{winRate}%</p>
-                        </div>
-                      </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-slate-800/50 rounded px-3 py-2">
+                      <p className="text-xs text-gray-400 mb-1">P/L</p>
+                      <p className={`text-sm font-medium ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="bg-slate-800/50 rounded px-3 py-2">
+                      <p className="text-xs text-gray-400 mb-1">Games</p>
+                      <p className="text-sm font-medium text-white">{gamesPlayed}</p>
+                    </div>
+                    <div className="bg-slate-800/50 rounded px-3 py-2">
+                      <p className="text-xs text-gray-400 mb-1">Wins</p>
+                      <p className="text-sm font-medium text-blue-400">{totalWins}</p>
+                    </div>
+                    <div className="bg-slate-800/50 rounded px-3 py-2">
+                      <p className="text-xs text-gray-400 mb-1">Win Rate</p>
+                      <p className="text-sm font-medium text-purple-400">{winRate}%</p>
                     </div>
                   </div>
-                  <Button
-                    onClick={() => removeFriend(friend.friend_id)}
-                    variant="ghost"
-                    size="sm"
-                    disabled={actionLoading[friend.friend_id]}
-                    className="text-red-400 hover:text-red-300 hover:bg-red-900/20 ml-2"
-                  >
-                    {actionLoading[friend.friend_id] ? "..." : "Remove"}
-                  </Button>
                 </div>
               </div>
             )

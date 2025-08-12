@@ -77,10 +77,18 @@ const StatsPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+      <div
+        className="min-h-screen text-white p-4"
+        style={{
+          backgroundImage: "url('/images/poker-table-background.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      >
         <div className="container mx-auto max-w-4xl">
           <div className="flex items-center justify-center min-h-[400px]">
-            <div className="text-center">
+            <div className="text-center bg-slate-800/80 backdrop-blur-sm rounded-lg p-8">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mb-4"></div>
               <p className="text-slate-400">Loading your statistics...</p>
             </div>
@@ -92,10 +100,18 @@ const StatsPage: React.FC = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+      <div
+        className="min-h-screen text-white p-4"
+        style={{
+          backgroundImage: "url('/images/poker-table-background.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      >
         <div className="container mx-auto max-w-4xl">
           <div className="flex items-center justify-center min-h-[400px]">
-            <div className="text-center">
+            <div className="text-center bg-slate-800/80 backdrop-blur-sm rounded-lg p-8">
               <div className="text-red-400 text-xl mb-4">⚠️</div>
               <p className="text-red-400 mb-4">{error}</p>
               <button
@@ -112,17 +128,25 @@ const StatsPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+    <div
+      className="min-h-screen text-white p-4"
+      style={{
+        backgroundImage: "url('/images/poker-table-background.jpg')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }}
+    >
       <div className="container mx-auto max-w-4xl">
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-          <div>
+          <div className="bg-slate-800/80 backdrop-blur-sm rounded-lg p-4">
             <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">Your Poker Statistics</h1>
             <p className="text-slate-400">Track your poker performance and progress</p>
           </div>
           <button
             onClick={handleRefresh}
-            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+            className="bg-slate-700/80 backdrop-blur-sm hover:bg-slate-600/80 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
           >
             <svg
               width="16"
@@ -144,7 +168,7 @@ const StatsPage: React.FC = () => {
         </div>
 
         {/* Main Stats Grid */}
-        <Card className="bg-gradient-to-r from-slate-800 to-slate-700 border-2 border-green-500 mb-8">
+        <Card className="bg-slate-800/90 backdrop-blur-sm border-2 border-green-500 mb-8">
           <div className="p-6">
             <h2 className="text-2xl font-bold text-green-400 mb-6 flex items-center">
               <span className="mr-3">📊</span>
@@ -154,7 +178,7 @@ const StatsPage: React.FC = () => {
             {/* 4-Stat Grid - Same as Friends Tab */}
             <div className="grid grid-cols-2 gap-4 sm:gap-6">
               {/* P/L */}
-              <div className="bg-slate-800 rounded-lg p-4 text-center border border-slate-600">
+              <div className="bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 text-center border border-slate-600">
                 <div
                   className={`text-2xl sm:text-3xl font-bold mb-1 ${getStatsColor(stats?.all_time_profit_loss || 0)}`}
                 >
@@ -164,19 +188,19 @@ const StatsPage: React.FC = () => {
               </div>
 
               {/* Games */}
-              <div className="bg-slate-800 rounded-lg p-4 text-center border border-slate-600">
+              <div className="bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 text-center border border-slate-600">
                 <div className="text-2xl sm:text-3xl font-bold text-blue-400 mb-1">{stats?.games_played || 0}</div>
                 <div className="text-slate-400 text-sm font-medium">Games</div>
               </div>
 
               {/* Wins */}
-              <div className="bg-slate-800 rounded-lg p-4 text-center border border-slate-600">
+              <div className="bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 text-center border border-slate-600">
                 <div className="text-2xl sm:text-3xl font-bold text-yellow-400 mb-1">{stats?.total_wins || 0}</div>
                 <div className="text-slate-400 text-sm font-medium">Wins</div>
               </div>
 
               {/* Win Rate */}
-              <div className="bg-slate-800 rounded-lg p-4 text-center border border-slate-600">
+              <div className="bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 text-center border border-slate-600">
                 <div className="text-2xl sm:text-3xl font-bold text-purple-400 mb-1">{calculateWinRate()}%</div>
                 <div className="text-slate-400 text-sm font-medium">Win Rate</div>
               </div>
@@ -205,7 +229,7 @@ const StatsPage: React.FC = () => {
         {/* Additional Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Performance Summary */}
-          <Card className="bg-slate-800 border border-slate-600">
+          <Card className="bg-slate-800/90 backdrop-blur-sm border border-slate-600">
             <div className="p-6">
               <h3 className="text-xl font-bold text-white mb-4 flex items-center">
                 <span className="mr-2">🎲</span>
@@ -237,7 +261,7 @@ const StatsPage: React.FC = () => {
           </Card>
 
           {/* Quick Stats */}
-          <Card className="bg-slate-800 border border-slate-600">
+          <Card className="bg-slate-800/90 backdrop-blur-sm border border-slate-600">
             <div className="p-6">
               <h3 className="text-xl font-bold text-white mb-4 flex items-center">
                 <span className="mr-2">⚡</span>
