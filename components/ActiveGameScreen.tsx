@@ -35,6 +35,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const [error, setError] = useState("")
   const [userFriends, setUserFriends] = useState<string[]>([])
   const [finalChipAmounts, setFinalChipAmounts] = useState<Record<string, string>>({})
+  const [showFinalSummary, setShowFinalSummary] = useState(false)
+  const [showCompletedGameSummary, setShowCompletedGameSummary] = useState(false)
 
   // Sync local session with prop changes
   useEffect(() => {
@@ -56,6 +58,12 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       setFinalChipAmounts(initialAmounts)
     }
   }, [showEndGameModal, localSession.playersInGame])
+
+  useEffect(() => {
+    if (localSession.status === "completed" && !showCompletedGameSummary) {
+      setShowCompletedGameSummary(true)
+    }
+  }, [localSession.status])
 
   const loadUserFriends = async () => {
     if (!user) return
@@ -99,6 +107,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const calculatePhysicalPoints = (playersInGame: PlayerInGame[]): number => {
+    if (!playersInGame || !Array.isArray(playersInGame)) return 0
     return playersInGame.reduce((total, player) => {
       if (player.status === "active") {
         return total + player.pointStack
@@ -108,12 +117,15 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const calculateTotalBuyIns = (playersInGame: PlayerInGame[]): number => {
+    if (!playersInGame || !Array.isArray(playersInGame)) return 0
     return playersInGame.reduce((total, player) => {
-      return total + player.buyIns.reduce((playerTotal, buyIn) => playerTotal + buyIn.amount, 0)
+      const playerBuyIns = player.buyIns || []
+      return total + playerBuyIns.reduce((playerTotal, buyIn) => playerTotal + buyIn.amount, 0)
     }, 0)
   }
 
   const calculateCurrentPot = (playersInGame: PlayerInGame[]): number => {
+    if (!playersInGame || !Array.isArray(playersInGame)) return 0
     const totalBuyIns = calculateTotalBuyIns(playersInGame)
     const totalCashOuts = playersInGame.reduce((total, player) => {
       return total + (player.cashOutAmount || 0)
@@ -231,13 +243,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     }
 
     const amount = Number.parseFloat(cashOutAmount)
-    if (isNaN(amount) || amount <= 0) {
-      setError("Cash-out amount must be a positive number")
-      return
-    }
-
-    if (amount > localSession.currentPhysicalPointsOnTable) {
-      setError("Cannot cash out more than total points in play")
+    if (isNaN(amount) || amount < 0) {
+      setError("Cash-out amount must be zero or positive")
       return
     }
 
@@ -303,10 +310,14 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       }
 
       const finalAmount = Number.parseFloat(finalChipAmounts[player.playerId] || "0")
+      const finalCashValue = finalAmount * (localSession.pointToCashRate || 0.1)
+      const totalBuyInAmount = (player.buyIns || []).reduce((sum, buyIn) => sum + buyIn.amount, 0)
       return {
         ...player,
         pointStack: finalAmount,
-        profitLoss: finalAmount * (localSession.pointValue || 0.1) - (player.totalBuyInAmount || 0),
+        cashOutAmount: finalCashValue,
+        hasCashedOut: true, // Mark as cashed out for final settlement
+        profitLoss: finalCashValue - totalBuyInAmount,
       }
     })
 
@@ -315,32 +326,41 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       playersInGame: updatedPlayersInGame,
       status: "completed" as const,
       endTime: new Date().toISOString(),
-      currentPhysicalPointsOnTable: calculatePhysicalPoints(updatedPlayersInGame),
+      currentPhysicalPointsOnTable: 0, // All chips are now settled
     }
 
     updatePlayerStatistics(finalSession)
 
     onEndGame(finalSession)
     setShowEndGameModal(false)
+    setShowFinalSummary(true)
   }
 
-  const updatePlayerStatistics = async (finalSession: GameSession) => {
+  const updatePlayerStatistics = async (session: GameSession) => {
     try {
-      for (const player of finalSession.playersInGame) {
+      for (const player of session.playersInGame) {
         if (player.profileId) {
-          const totalBuyIn = getPlayerTotalBuyIn(player)
-          const profitLoss = getPlayerProfitLoss(player)
+          const totalBuyInAmount = (player.buyIns || []).reduce((sum, buyIn) => sum + buyIn.amount, 0)
+          const profitLoss = (player.cashOutAmount || 0) - totalBuyInAmount
           const isWinner = profitLoss > 0
 
-          // Update player's statistics in the database
-          await supabase
-            .from("profiles")
-            .update({
-              games_played: supabase.raw("games_played + 1"),
-              total_wins: isWinner ? supabase.raw("total_wins + 1") : supabase.raw("total_wins"),
-              all_time_profit_loss: supabase.raw(`all_time_profit_loss + ${profitLoss}`),
-            })
-            .eq("id", player.profileId)
+          console.log(
+            `Player ${player.name}: Buy-ins = ${totalBuyInAmount}, Cash-out = ${player.cashOutAmount || 0}, P/L = ${profitLoss}, isWinner = ${isWinner}`,
+          )
+
+          const updateData = {
+            games_played: supabase.raw("games_played + 1"),
+            all_time_profit_loss: supabase.raw(`all_time_profit_loss + ${profitLoss}`),
+            total_wins: supabase.raw(`total_wins + ${isWinner ? 1 : 0}`),
+          }
+
+          const { error } = await supabase.from("profiles").update(updateData).eq("id", player.profileId)
+
+          if (error) {
+            console.error(`Error updating stats for ${player.name}:`, error)
+          } else {
+            console.log(`Successfully updated stats for ${player.name}${isWinner ? " (with win)" : ""}`)
+          }
         }
       }
     } catch (error) {
@@ -358,9 +378,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const calculateTotalBuyInsForActivePlayers = (playersInGame: PlayerInGame[]): number => {
+    if (!playersInGame || !Array.isArray(playersInGame)) return 0
     return playersInGame.reduce((total, player) => {
       if (!player.hasCashedOut) {
-        return total + player.buyIns.reduce((playerTotal, buyIn) => playerTotal + buyIn.amount, 0)
+        const playerBuyIns = player.buyIns || []
+        return total + playerBuyIns.reduce((playerTotal, buyIn) => playerTotal + buyIn.amount, 0)
       }
       return total
     }, 0)
@@ -375,7 +397,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const getPlayerTotalBuyIn = (player: PlayerInGame): number => {
-    return player.buyIns.reduce((total, buyIn) => total + buyIn.amount, 0)
+    const playerBuyIns = player.buyIns || []
+    return playerBuyIns.reduce((total, buyIn) => total + buyIn.amount, 0)
   }
 
   const getPlayerProfitLoss = (player: PlayerInGame): number => {
@@ -484,6 +507,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     }
   }
 
+  const isGameCompleted = localSession.status === "completed"
+
   return (
     <div
       className="min-h-screen text-white p-4"
@@ -507,10 +532,10 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               <p className="text-green-400">Status: {localSession.status}</p>
             </div>
           </div>
-          {isHost && (
+          {!isGameCompleted && (
             <button
               onClick={() => setShowEndGameModal(true)}
-              className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-semibold"
+              className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-semibold shadow-lg"
             >
               Close Game
             </button>
@@ -533,17 +558,17 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           </div>
         </div>
 
-        {isHost && (
+        {!isGameCompleted && (
           <div className="grid grid-cols-2 gap-4 mb-6">
             <Button
               onClick={() => setShowAddPlayerModal(true)}
-              className="bg-green-600 hover:bg-green-700 text-white py-3"
+              className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-lg font-semibold"
             >
               Add New Player to Game
             </Button>
             <Button
               onClick={() => setShowAddFriendModal(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white py-3"
+              className="bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-semibold"
             >
               Add Friend to Game
             </Button>
@@ -553,14 +578,14 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         {/* Players */}
         <div className="grid gap-4 md:gap-6">
           {localSession.playersInGame.map((player) => {
-            const totalBuyIn = player.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
+            const totalBuyIn = (player.buyIns || []).reduce((sum, buyIn) => sum + buyIn.amount, 0)
             const profitLoss = getPlayerProfitLoss(player)
             const isHost = player.id === user?.id
 
             return (
               <div
                 key={player.id}
-                className={`bg-slate-800/30 backdrop-blur-sm rounded-lg p-4 md:p-6 border border-slate-700/50 ${
+                className={`bg-slate-800/60 backdrop-blur-sm rounded-lg p-4 md:p-6 border border-slate-700/50 ${
                   player.hasCashedOut ? "opacity-60 blur-[2px]" : ""
                 }`}
               >
@@ -572,17 +597,17 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                     <div>
                       <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                         {player.name}
-                        {isHost && <span className="text-xs bg-green-600 px-2 py-1 rounded">HOST</span>}
                         {player.hasCashedOut && (
                           <span className="text-xs bg-red-600 px-2 py-1 rounded">CASHED OUT</span>
                         )}
                       </h3>
+
                       <div className="flex items-center gap-2">
-                        {userFriends?.some((friend) => friend.id === player.id) ? (
+                        {userFriends?.some((friend) => friend === player.playerId) ? (
                           <CheckIcon className="w-4 h-4 text-green-400" />
                         ) : (
                           <button
-                            onClick={() => handleSendFriendRequest(player.id)}
+                            onClick={() => handleSendFriendRequest(player.playerId)}
                             className="hover:bg-slate-700 p-1 rounded"
                           >
                             <UserIcon className="w-4 h-4 text-blue-400" />
@@ -667,29 +692,26 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                   </div>
                 )}
 
-                {isHost && (
-                  <div className="flex gap-2">
-                    <button
+                {!isGameCompleted && !player.hasCashedOut && (
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                    <Button
                       onClick={() => {
                         setSelectedPlayer(player)
-                        setBuyInAmount("")
                         setShowBuyInModal(true)
                       }}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium transition-colors"
-                      disabled={player.hasCashedOut}
+                      className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg text-sm font-semibold"
                     >
                       Buy-in
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       onClick={() => {
                         setSelectedPlayer(player)
                         setShowCashOutModal(true)
                       }}
-                      className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded font-medium transition-colors"
-                      disabled={player.hasCashedOut || player.pointStack <= 0}
+                      className="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg text-sm font-semibold"
                     >
                       Cash Out
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -698,7 +720,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         </div>
 
         {/* Payment Summary */}
-        <PaymentSummary session={localSession} />
+        {isGameCompleted && <PaymentSummary session={localSession} />}
 
         {/* Modals */}
         <Modal
@@ -1037,6 +1059,109 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             </div>
           </div>
         </Modal>
+
+        {/* Final Summary Modal */}
+        {showFinalSummary && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-3xl font-bold text-green-400">🎉 Game Complete!</h2>
+                <button onClick={() => setShowFinalSummary(false)} className="text-gray-400 hover:text-white text-2xl">
+                  ×
+                </button>
+              </div>
+
+              {/* Game Summary */}
+              <div className="bg-gray-700 p-6 rounded-lg mb-6">
+                <h3 className="text-xl font-bold text-white mb-4">Game Summary</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                  <div>
+                    <p className="text-gray-400 text-sm">Duration</p>
+                    <p className="text-white font-bold">{formatElapsedTime(localSession.startTime)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm">Total Players</p>
+                    <p className="text-white font-bold">{localSession.playersInGame.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm">Total Buy-ins</p>
+                    <p className="text-white font-bold">${calculateTotalBuyIns().toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm">Point Rate</p>
+                    <p className="text-white font-bold">${(localSession.pointToCashRate || 0.1).toFixed(2)}/pt</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Player Results */}
+              <div className="bg-gray-700 p-6 rounded-lg mb-6">
+                <h3 className="text-xl font-bold text-white mb-4">Final Results</h3>
+                <div className="space-y-3">
+                  {localSession.playersInGame
+                    .sort((a, b) => getPlayerProfitLoss(b) - getPlayerProfitLoss(a))
+                    .map((player, index) => {
+                      const profitLoss = getPlayerProfitLoss(player)
+                      const totalBuyIn = getPlayerTotalBuyIn(player)
+                      return (
+                        <div
+                          key={player.playerId}
+                          className="flex items-center justify-between bg-gray-600 p-4 rounded-lg"
+                        >
+                          <div className="flex items-center space-x-4">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-2xl">
+                                {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "🏅"}
+                              </span>
+                              <span className="text-lg font-bold text-white">{player.name}</span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm text-gray-400">
+                              Buy-in: ${totalBuyIn.toFixed(2)} → Cash-out: ${player.cashOutAmount.toFixed(2)}
+                            </p>
+                            <p className={`text-lg font-bold ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                              {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+
+              {/* Payment Settlement */}
+              <PaymentSummary session={localSession} className="mb-6" />
+
+              <div className="flex justify-center">
+                <Button
+                  onClick={() => setShowFinalSummary(false)}
+                  className="bg-green-600 hover:bg-green-700 text-white py-3 px-8 rounded-lg font-semibold"
+                >
+                  Close Summary
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Completed Game Summary Modal */}
+        {showCompletedGameSummary && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-green-400">Game Summary</h2>
+                <button
+                  onClick={() => setShowCompletedGameSummary(false)}
+                  className="text-gray-400 hover:text-white text-2xl"
+                >
+                  ×
+                </button>
+              </div>
+              <PaymentSummary session={localSession} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
