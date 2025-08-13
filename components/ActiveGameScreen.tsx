@@ -348,17 +348,33 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             `Player ${player.name}: Buy-ins = ${totalBuyInAmount}, Cash-out = ${player.cashOutAmount || 0}, P/L = ${profitLoss}, isWinner = ${isWinner}`,
           )
 
-          const updateData = {
+          const baseUpdateData = {
             games_played: supabase.raw("games_played + 1"),
             all_time_profit_loss: supabase.raw(`all_time_profit_loss + ${profitLoss}`),
-            total_wins: supabase.raw(`total_wins + ${isWinner ? 1 : 0}`),
           }
 
-          const { error } = await supabase.from("profiles").update(updateData).eq("id", player.profileId)
+          // Update base stats first
+          const { error: baseError } = await supabase.from("profiles").update(baseUpdateData).eq("id", player.profileId)
 
-          if (error) {
-            console.error(`Error updating stats for ${player.name}:`, error)
-          } else {
+          if (baseError) {
+            console.error(`Error updating base stats for ${player.name}:`, baseError)
+          }
+
+          // Update total_wins separately if player won
+          if (isWinner) {
+            const { error: winError } = await supabase
+              .from("profiles")
+              .update({ total_wins: supabase.raw("total_wins + 1") })
+              .eq("id", player.profileId)
+
+            if (winError) {
+              console.error(`Error updating wins for ${player.name}:`, winError)
+            } else {
+              console.log(`Successfully updated win for ${player.name}`)
+            }
+          }
+
+          if (!baseError) {
             console.log(`Successfully updated stats for ${player.name}${isWinner ? " (with win)" : ""}`)
           }
         }
