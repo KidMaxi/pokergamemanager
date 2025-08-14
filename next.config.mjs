@@ -9,10 +9,6 @@ const nextConfig = {
   // Enable static optimization
   trailingSlash: false,
   
-  // Optimize bundle
-  experimental: {
-    optimizeCss: true,
-  },
   
   // PWA and asset handling
   async headers() {
