@@ -287,16 +287,10 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     setError("")
   }
 
-  const handleEndGame = () => {
-    const activePlayersOnly = localSession.playersInGame.filter((player) => !player.hasCashedOut)
-    const invalidAmounts = Object.entries(finalChipAmounts).filter(([playerId, amount]) => {
-      // Only check amounts for active players
-      const isActivePlayer = activePlayersOnly.some((p) => p.playerId === playerId)
-      if (!isActivePlayer) return false
-
-      const numAmount = Number.parseFloat(amount)
-      return isNaN(numAmount) || numAmount < 0
-    })
+  const handleEndGame = async () => {
+    const invalidAmounts = Object.entries(finalChipAmounts).filter(
+      ([playerId, amount]) => amount === "" || Number.parseFloat(amount) < 0,
+    )
 
     if (invalidAmounts.length > 0) {
       setError("All final chip amounts must be filled and ≥ 0")
@@ -304,18 +298,14 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
     }
 
     const updatedPlayersInGame = localSession.playersInGame.map((player) => {
-      if (player.hasCashedOut) {
-        // Keep cashed out players unchanged
-        return player
-      }
-
       const finalAmount = Number.parseFloat(finalChipAmounts[player.playerId] || "0")
       const finalCashValue = finalAmount * (localSession.pointToCashRate || 0.1)
       const totalBuyInAmount = (player.buyIns || []).reduce((sum, buyIn) => sum + buyIn.amount, 0)
+
       return {
         ...player,
         pointStack: finalAmount,
-        cashOutAmount: finalCashValue,
+        cashOutAmount: finalCashValue, // Always set based on final chip amount
         hasCashedOut: true, // Mark as cashed out for final settlement
         profitLoss: finalCashValue - totalBuyInAmount,
       }
@@ -348,34 +338,43 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             `Player ${player.name}: Buy-ins = ${totalBuyInAmount}, Cash-out = ${player.cashOutAmount || 0}, P/L = ${profitLoss}, isWinner = ${isWinner}`,
           )
 
-          const baseUpdateData = {
-            games_played: supabase.raw("games_played + 1"),
-            all_time_profit_loss: supabase.raw(`all_time_profit_loss + ${profitLoss}`),
+          // Fetch current profile data to get current values
+          const { data: currentProfile, error: fetchError } = await supabase
+            .from("profiles")
+            .select("games_played, all_time_profit_loss, total_wins")
+            .eq("id", player.profileId)
+            .single()
+
+          if (fetchError) {
+            console.error(`Error fetching current profile for ${player.name}:`, fetchError)
+            continue
           }
 
-          // Update base stats first
-          const { error: baseError } = await supabase.from("profiles").update(baseUpdateData).eq("id", player.profileId)
+          // Calculate new values explicitly
+          const newGamesPlayed = (currentProfile.games_played || 0) + 1
+          const newProfitLoss = (currentProfile.all_time_profit_loss || 0) + profitLoss
+          const newTotalWins = (currentProfile.total_wins || 0) + (isWinner ? 1 : 0)
 
-          if (baseError) {
-            console.error(`Error updating base stats for ${player.name}:`, baseError)
-          }
+          console.log(
+            `Updating ${player.name}: games_played ${currentProfile.games_played || 0} -> ${newGamesPlayed}, total_wins ${currentProfile.total_wins || 0} -> ${newTotalWins}`,
+          )
 
-          // Update total_wins separately if player won
-          if (isWinner) {
-            const { error: winError } = await supabase
-              .from("profiles")
-              .update({ total_wins: supabase.raw("total_wins + 1") })
-              .eq("id", player.profileId)
+          // Update with explicit values
+          const { error: updateError } = await supabase
+            .from("profiles")
+            .update({
+              games_played: newGamesPlayed,
+              all_time_profit_loss: newProfitLoss,
+              total_wins: newTotalWins,
+            })
+            .eq("id", player.profileId)
 
-            if (winError) {
-              console.error(`Error updating wins for ${player.name}:`, winError)
-            } else {
-              console.log(`Successfully updated win for ${player.name}`)
-            }
-          }
-
-          if (!baseError) {
-            console.log(`Successfully updated stats for ${player.name}${isWinner ? " (with win)" : ""}`)
+          if (updateError) {
+            console.error(`Error updating stats for ${player.name}:`, updateError)
+          } else {
+            console.log(
+              `Successfully updated stats for ${player.name}: games_played=${newGamesPlayed}, total_wins=${newTotalWins}`,
+            )
           }
         }
       }
@@ -918,7 +917,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
               <h2 className="text-2xl font-bold mb-4 text-green-400">Payment Settlement</h2>
-              <p className="text-gray-300 mb-4">Enter the final chip amount for each active player (must be ≥ 0):</p>
+              <p className="text-gray-300 mb-4">Enter the final chip amount for each player (must be ≥ 0):</p>
 
               <div className="bg-gray-700 p-4 rounded-lg mb-6">
                 <div className="flex justify-between items-center">
@@ -942,94 +941,60 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               </div>
 
               <div className="space-y-4 mb-6">
-                {localSession.playersInGame
-                  .filter((player) => !player.hasCashedOut)
-                  .map((player) => (
-                    <div key={player.playerId} className="flex items-center justify-between bg-gray-700 p-4 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white font-bold">
-                          {getInitials(player.name)}
-                        </div>
-                        <div>
-                          <p className="font-semibold">{player.name}</p>
-                          <p className="text-sm text-gray-400">Buy-in: ${getPlayerTotalBuyIn(player).toFixed(2)}</p>
-                          <p className="text-sm text-gray-400">Current: {player.pointStack} chips</p>
-                        </div>
+                {localSession.playersInGame.map((player) => (
+                  <div key={player.playerId} className="flex items-center justify-between bg-gray-700 p-4 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white font-bold">
+                        {getInitials(player.name)}
                       </div>
-                      <div className="flex items-center space-x-4">
-                        <div className="text-right">
-                          <p className="text-sm text-gray-400">Final Chips:</p>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={finalChipAmounts[player.playerId] || ""}
-                            onChange={(e) =>
-                              setFinalChipAmounts((prev) => ({
-                                ...prev,
-                                [player.playerId]: e.target.value,
-                              }))
-                            }
-                            className="w-24 px-2 py-1 bg-gray-600 text-white rounded text-center"
-                            placeholder={player.pointStack.toString()}
-                          />
-                        </div>
-                        <div className="text-right min-w-[80px]">
-                          <p className="text-sm text-gray-400">P/L:</p>
-                          <p
-                            className={`font-bold ${
-                              (
-                                Number.parseFloat(finalChipAmounts[player.playerId] || "0") *
-                                  (localSession.pointValue || 0.1) -
-                                  getPlayerTotalBuyIn(player)
-                              ) >= 0
-                                ? "text-green-400"
-                                : "text-red-400"
-                            }`}
-                          >
-                            $
-                            {(
-                              Number.parseFloat(finalChipAmounts[player.playerId] || "0") *
-                                (localSession.pointValue || 0.1) -
-                              getPlayerTotalBuyIn(player)
-                            ).toFixed(2)}
-                          </p>
-                        </div>
+                      <div>
+                        <p className="font-semibold">{player.name}</p>
+                        <p className="text-sm text-gray-400">Buy-in: ${getPlayerTotalBuyIn(player).toFixed(2)}</p>
+                        <p className="text-sm text-gray-400">Current: {player.pointStack} chips</p>
                       </div>
                     </div>
-                  ))}
-
-                {localSession.playersInGame.filter((player) => player.hasCashedOut).length > 0 && (
-                  <div className="mt-6">
-                    <h3 className="text-lg font-semibold text-gray-300 mb-3">Cashed Out Players (Final)</h3>
-                    {localSession.playersInGame
-                      .filter((player) => player.hasCashedOut)
-                      .map((player) => (
-                        <div
-                          key={player.playerId}
-                          className="flex items-center justify-between bg-gray-600 p-4 rounded-lg opacity-75"
+                    <div className="flex items-center space-x-4">
+                      <div className="text-right">
+                        <p className="text-sm text-gray-400">Final Chips:</p>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={finalChipAmounts[player.playerId] || ""}
+                          onChange={(e) =>
+                            setFinalChipAmounts((prev) => ({
+                              ...prev,
+                              [player.playerId]: e.target.value,
+                            }))
+                          }
+                          className="w-24 px-2 py-1 bg-gray-600 text-white rounded text-center"
+                          placeholder={player.pointStack.toString()}
+                        />
+                      </div>
+                      <div className="text-right min-w-[80px]">
+                        <p className="text-sm text-gray-400">P/L:</p>
+                        <p
+                          className={`font-bold ${
+                            (
+                              Number.parseFloat(finalChipAmounts[player.playerId] || "0") *
+                                (localSession.pointValue || 0.1) -
+                                getPlayerTotalBuyIn(player)
+                            ) >= 0
+                              ? "text-green-400"
+                              : "text-red-400"
+                          }`}
                         >
-                          <div className="flex items-center space-x-3">
-                            <div className="w-10 h-10 bg-gray-500 rounded-full flex items-center justify-center text-white font-bold">
-                              {getInitials(player.name)}
-                            </div>
-                            <div>
-                              <p className="font-semibold">{player.name} (Cashed Out)</p>
-                              <p className="text-sm text-gray-400">Buy-in: ${getPlayerTotalBuyIn(player).toFixed(2)}</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm text-gray-400">Final P/L:</p>
-                            <p
-                              className={`font-bold ${getPlayerProfitLoss(player) >= 0 ? "text-green-400" : "text-red-400"}`}
-                            >
-                              ${getPlayerProfitLoss(player).toFixed(2)}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
+                          $
+                          {(
+                            Number.parseFloat(finalChipAmounts[player.playerId] || "0") *
+                              (localSession.pointValue || 0.1) -
+                            getPlayerTotalBuyIn(player)
+                          ).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                )}
+                ))}
               </div>
 
               <div className="flex space-x-4">

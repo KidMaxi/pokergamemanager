@@ -602,29 +602,7 @@ export default function Home() {
         return
       }
 
-      // If user is the owner, delete from database
-      if (gameToDelete.isOwner !== false) {
-        // Delete from database first
-        const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
-
-        if (error) {
-          console.error("Database delete error:", error)
-          throw error
-        }
-        console.log("✅ Game deleted successfully from database")
-      } else {
-        // If user was invited, just remove from local state (don't delete from database)
-        // Optionally, we could also remove the invitation record
-        try {
-          await supabase.from("game_invitations").delete().eq("game_session_id", sessionId).eq("invitee_id", user!.id)
-
-          console.log("✅ Invitation record removed")
-        } catch (error) {
-          console.warn("Could not remove invitation record (non-critical):", error)
-        }
-      }
-
-      // Update local state (remove from UI)
+      // Update local state (remove from UI) - do this first to ensure immediate UI feedback
       setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
 
       // If this was the active game, navigate back to dashboard
@@ -633,10 +611,56 @@ export default function Home() {
         setCurrentView("dashboard")
       }
 
-      console.log(gameToDelete.isOwner !== false ? "Game deleted successfully" : "Game removed from dashboard")
+      // Now handle database operations (these can fail without affecting UI)
+      if (gameToDelete.isOwner === true) {
+        // Delete from database for owned games only
+        try {
+          const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
+
+          if (error) {
+            console.error("Database delete error:", error)
+            // Don't throw - game is already removed from UI
+            console.warn("Game removed from UI but database deletion failed")
+          } else {
+            console.log("✅ Game deleted successfully from database")
+          }
+        } catch (dbError) {
+          console.error("Database deletion failed:", dbError)
+          // Don't throw - game is already removed from UI
+        }
+      } else {
+        // Remove invitation record for invited games
+        try {
+          const { error } = await supabase
+            .from("game_invitations")
+            .delete()
+            .eq("game_session_id", sessionId)
+            .eq("invitee_id", user!.id)
+
+          if (error) {
+            console.error("Error removing invitation record:", error)
+          } else {
+            console.log("✅ Invitation record removed")
+          }
+        } catch (error) {
+          console.warn("Could not remove invitation record (non-critical):", error)
+          // Don't throw - this is non-critical
+        }
+      }
+
+      console.log(gameToDelete.isOwner === true ? "Game deleted successfully" : "Game removed from dashboard")
     } catch (error) {
       console.error("Error deleting/removing game:", error)
-      alert("Failed to delete/remove game. Please try again.")
+      // Ensure game is removed from UI even if there were errors
+      setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
+
+      if (activeGameId === sessionId) {
+        setActiveGameId(null)
+        setCurrentView("dashboard")
+      }
+
+      // Show user feedback but don't prevent the deletion from UI perspective
+      console.warn("Game removed from dashboard, but there may have been database sync issues")
     }
   }
 
