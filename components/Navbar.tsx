@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import type { View } from "../types"
+import { useRouter, usePathname } from "next/navigation"
 import { useAuth } from "../contexts/AuthContext"
 import { supabase } from "../lib/supabase"
 import { formatCurrency, formatDate } from "../utils"
@@ -11,20 +11,16 @@ import Input from "./common/Input"
 import Button from "./common/Button"
 import Card from "./common/Card"
 
-interface NavbarProps {
-  setCurrentView: (view: View) => void
-  activeView: View
-  user: any
-}
-
 interface UserStats {
   all_time_profit_loss: number
   games_played: number
   last_game_date: string | null
 }
 
-const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => {
-  const { signOut } = useAuth()
+const Navbar: React.FC = () => {
+  const router = useRouter()
+  const pathname = usePathname()
+  const { user, signOut } = useAuth()
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [fullName, setFullName] = useState("")
   const [loading, setLoading] = useState(false)
@@ -33,6 +29,16 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
   const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+
+  const getActiveView = () => {
+    if (pathname === "/") return "dashboard"
+    if (pathname === "/friends") return "friends"
+    if (pathname === "/stats") return "stats"
+    if (pathname?.startsWith("/games/")) return "activeGame"
+    return "dashboard"
+  }
+
+  const activeView = getActiveView()
 
   useEffect(() => {
     if (user) {
@@ -44,7 +50,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
 
   const handleOpenProfile = async () => {
     if (user) {
-      // Load current profile data including stats
       try {
         const { data, error } = await supabase
           .from("profiles")
@@ -61,7 +66,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
           })
         } else if (error) {
           console.error("Error loading profile:", error)
-          // Set default stats if profile doesn't exist yet
           setUserStats({
             all_time_profit_loss: 0,
             games_played: 0,
@@ -70,7 +74,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
         }
       } catch (err) {
         console.error("Error loading profile:", err)
-        // Set default stats on error
         setUserStats({
           all_time_profit_loss: 0,
           games_played: 0,
@@ -109,14 +112,13 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
 
   const handleSignOut = async () => {
     try {
-      setIsProfileModalOpen(false) // Close modal immediately
+      setIsProfileModalOpen(false)
       const { error } = await signOut()
 
       if (error) {
         console.error("Sign out error:", error)
         setError("Error signing out")
       } else {
-        // Force a page reload to ensure clean state
         window.location.reload()
       }
     } catch (err) {
@@ -134,17 +136,13 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
   }
 
   const handleTitleClick = () => {
-    setCurrentView("dashboard")
+    router.push("/")
   }
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
     try {
-      // Small delay to show the refresh animation
       await new Promise((resolve) => setTimeout(resolve, 500))
-      // Store current view in localStorage before refresh
-      localStorage.setItem("poker-current-view", activeView)
-      // Reload the page while preserving authentication
       window.location.reload()
     } catch (error) {
       console.error("Error refreshing:", error)
@@ -176,12 +174,15 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
     return "text-text-secondary"
   }
 
+  if (!user) {
+    return null
+  }
+
   return (
     <>
       <nav className="bg-surface-card border-b border-border-default">
         <div className="container mx-auto px-3 py-2 sm:px-4 sm:py-3">
           <div className="flex justify-between items-center">
-            {/* Mobile-optimized title with refresh button */}
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleTitleClick}
@@ -220,7 +221,7 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
 
             <div className="flex items-center space-x-1 sm:space-x-2">
               <button
-                onClick={() => setCurrentView("dashboard")}
+                onClick={() => router.push("/")}
                 className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   activeView === "dashboard"
                     ? "bg-brand-primary text-white"
@@ -231,7 +232,7 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
               </button>
 
               <button
-                onClick={() => setCurrentView("friends")}
+                onClick={() => router.push("/friends")}
                 className={`relative px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   activeView === "friends"
                     ? "bg-brand-primary text-white"
@@ -247,7 +248,7 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
               </button>
 
               <button
-                onClick={() => setCurrentView("stats")}
+                onClick={() => router.push("/stats")}
                 className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   activeView === "stats" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
                 }`}
@@ -274,7 +275,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
       {/* Profile Modal */}
       <Modal isOpen={isProfileModalOpen} onClose={handleCloseModal} title="User Profile">
         <div className="space-y-6">
-          {/* User Info */}
           <div className="bg-surface-input p-4 rounded-lg border border-border-default">
             <h3 className="text-lg font-semibold text-text-primary mb-2">Account Information</h3>
             <p className="text-text-secondary">
@@ -286,7 +286,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             </p>
           </div>
 
-          {/* All-Time Stats - Always show, even with zero values */}
           <Card className="bg-gradient-to-r from-slate-800 to-slate-700 border-2 border-brand-primary">
             <h3 className="text-lg font-semibold text-brand-primary mb-4 flex items-center">
               <span className="mr-2">📊</span>
@@ -320,7 +319,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             )}
           </Card>
 
-          {/* Update Profile Form */}
           <form onSubmit={handleUpdateProfile} className="space-y-4">
             <Input
               label="Full Name"
@@ -346,7 +344,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             </Button>
           </form>
 
-          {/* Actions */}
           <div className="flex justify-between pt-4 border-t border-border-default">
             <Button onClick={handleCloseModal} variant="ghost">
               Close

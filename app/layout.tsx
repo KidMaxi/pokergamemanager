@@ -3,6 +3,8 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import { AuthProvider } from "../contexts/AuthContext"
+import Navbar from "../components/Navbar"
+import PWAInstall from "../components/PWAInstall"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -23,7 +25,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <Navbar />
+          {children}
+          <PWAInstall />
+          <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
+            Poker Homegame Manager V52 &copy; {new Date().getFullYear()}
+          </footer>
+        </AuthProvider>
       </body>
     </html>
   )
