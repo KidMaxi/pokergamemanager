@@ -4,7 +4,6 @@ import type { Database } from "./database.types"
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
-// Client-side Supabase client (singleton pattern)
 let supabaseClient: ReturnType<typeof createClient<Database>> | null = null
 
 export const createClientComponentClient = () => {
@@ -13,17 +12,18 @@ export const createClientComponentClient = () => {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
+        detectSessionInUrl: true,
       },
     })
   }
   return supabaseClient
 }
 
-// Server-side Supabase client
 export const createServerComponentClient = () => {
   return createClient<Database>(supabaseUrl, supabaseAnonKey, {
     auth: {
       persistSession: false,
+      autoRefreshToken: false,
     },
   })
 }
@@ -39,4 +39,4 @@ export const createAdminClient = () => {
   })
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClientComponentClient()
