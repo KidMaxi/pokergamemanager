@@ -319,58 +319,67 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       currentPhysicalPointsOnTable: 0, // All chips are now settled
     }
 
-    await finalizeGameStats(finalSession)
+    updatePlayerStatistics(finalSession)
 
     onEndGame(finalSession)
     setShowEndGameModal(false)
     setShowFinalSummary(true)
   }
 
-  const finalizeGameStats = async (session: GameSession) => {
+  const updatePlayerStatistics = async (session: GameSession) => {
     try {
-      // Prepare player results for the RPC function
-      const playerResults = session.playersInGame
-        .filter((player) => player.profileId) // Only include players with profiles
-        .map((player) => {
+      for (const player of session.playersInGame) {
+        if (player.profileId) {
           const totalBuyInAmount = (player.buyIns || []).reduce((sum, buyIn) => sum + buyIn.amount, 0)
           const profitLoss = (player.cashOutAmount || 0) - totalBuyInAmount
           const isWinner = profitLoss > 0
 
-          return {
-            profileId: player.profileId,
-            profitLoss: profitLoss,
-            isWinner: isWinner,
-            playerName: player.name,
+          console.log(
+            `Player ${player.name}: Buy-ins = ${totalBuyInAmount}, Cash-out = ${player.cashOutAmount || 0}, P/L = ${profitLoss}, isWinner = ${isWinner}`,
+          )
+
+          // Fetch current profile data to get current values
+          const { data: currentProfile, error: fetchError } = await supabase
+            .from("profiles")
+            .select("games_played, all_time_profit_loss, total_wins")
+            .eq("id", player.profileId)
+            .single()
+
+          if (fetchError) {
+            console.error(`Error fetching current profile for ${player.name}:`, fetchError)
+            continue
           }
-        })
 
-      console.log("Finalizing game stats for players:", playerResults)
+          // Calculate new values explicitly
+          const newGamesPlayed = (currentProfile.games_played || 0) + 1
+          const newProfitLoss = (currentProfile.all_time_profit_loss || 0) + profitLoss
+          const newTotalWins = (currentProfile.total_wins || 0) + (isWinner ? 1 : 0)
 
-      // Call the idempotent finalization function
-      const { data, error } = await supabase.rpc("finalize_game_stats", {
-        p_game_id: session.dbId || session.id,
-        p_owner_id: session.userId,
-        p_player_results: playerResults,
-      })
+          console.log(
+            `Updating ${player.name}: games_played ${currentProfile.games_played || 0} -> ${newGamesPlayed}, total_wins ${currentProfile.total_wins || 0} -> ${newTotalWins}`,
+          )
 
-      if (error) {
-        console.error("Error finalizing game stats:", error)
-        setError("Failed to update player statistics")
-        return
-      }
+          // Update with explicit values
+          const { error: updateError } = await supabase
+            .from("profiles")
+            .update({
+              games_played: newGamesPlayed,
+              all_time_profit_loss: newProfitLoss,
+              total_wins: newTotalWins,
+            })
+            .eq("id", player.profileId)
 
-      if (data && !data.success) {
-        console.warn("Game finalization warning:", data.message)
-        if (data.message !== "Game already finalized") {
-          setError(`Stats update issue: ${data.message}`)
+          if (updateError) {
+            console.error(`Error updating stats for ${player.name}:`, updateError)
+          } else {
+            console.log(
+              `Successfully updated stats for ${player.name}: games_played=${newGamesPlayed}, total_wins=${newTotalWins}`,
+            )
+          }
         }
-        return
       }
-
-      console.log("Game stats finalized successfully:", data)
     } catch (error) {
-      console.error("Error in finalizeGameStats:", error)
-      setError("Failed to update player statistics")
+      console.error("Error updating player statistics:", error)
     }
   }
 
