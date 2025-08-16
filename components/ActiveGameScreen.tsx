@@ -139,12 +139,20 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       return
     }
 
+    const existingPlayerInGame = localSession.playersInGame.find(
+      (p) => p.name.toLowerCase() === newPlayerName.trim().toLowerCase(),
+    )
+    if (existingPlayerInGame) {
+      setError("A player with this name is already in the game")
+      return
+    }
+
     setLoading(true)
     try {
       // Add player globally first
       const newPlayer = await onAddNewPlayerGlobally(newPlayerName.trim())
       if (!newPlayer) {
-        setError("Failed to add player")
+        setError("A player with this name already exists or failed to add player")
         return
       }
 
@@ -182,7 +190,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       setShowAddPlayerModal(false)
       setError("")
     } catch (error) {
-      setError("Failed to add player")
+      console.error("Error adding player:", error)
+      setError("Failed to add player. Please try again.")
     } finally {
       setLoading(false)
     }

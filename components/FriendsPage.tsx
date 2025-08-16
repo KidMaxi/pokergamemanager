@@ -2,8 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect, useCallback } from "react"
-import { useAuth } from "../contexts/AuthContext"
-import { supabase } from "../lib/supabase"
+import { useSupabase } from "../contexts/SupabaseProvider"
 import Button from "./common/Button"
 import Card from "./common/Card"
 import Input from "./common/Input"
@@ -51,7 +50,8 @@ interface UserProfile {
 type TabType = "friends" | "sent" | "received"
 
 const FriendsPage: React.FC = () => {
-  const { user } = useAuth()
+  const { session, supabase } = useSupabase()
+  const user = session?.user
   const [friends, setFriends] = useState<Friend[]>([])
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([])
   const [sentRequests, setSentRequests] = useState<FriendRequest[]>([])

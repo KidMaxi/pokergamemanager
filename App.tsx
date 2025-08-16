@@ -56,13 +56,11 @@ const App: React.FC = () => {
     }
   }
 
-  const handleAddNewPlayerGlobally = (name: string): Player | null => {
+  const handleAddNewPlayerGlobally = async (name: string): Promise<Player | null> => {
     if (!name.trim()) {
-      alert("Player name cannot be empty.")
       return null
     }
     if (players.find((p) => p.name.toLowerCase() === name.trim().toLowerCase())) {
-      alert("A player with this name already exists.")
       return null
     }
 

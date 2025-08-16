@@ -9,8 +9,7 @@ import Input from "./common/Input"
 import Modal from "./common/Modal"
 import Card from "./common/Card"
 import LiveTimer from "./common/LiveTimer"
-import { useAuth } from "../contexts/AuthContext"
-import { supabase } from "../lib/supabase"
+import { useSupabase } from "../contexts/SupabaseProvider"
 import GameInvitationCard from "./GameInvitationCard"
 
 interface GameDashboardProps {
@@ -140,7 +139,8 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
   onSelectGame,
   onDeleteGame,
 }) => {
-  const { user } = useAuth()
+  const { session, supabase } = useSupabase()
+  const user = session?.user
   const [isNewGameModalOpen, setIsNewGameModalOpen] = useState(false)
   const [newGameName, setNewGameName] = useState(`Poker Game - ${new Date().toLocaleDateString()}`)
   const [pointRate, setPointRate] = useState(0.1)

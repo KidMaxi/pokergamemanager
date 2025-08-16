@@ -1,13 +1,12 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { GameInvitation } from "../types"
 import { formatDate } from "../utils"
 import Button from "./common/Button"
 import Card from "./common/Card"
-import { useAuth } from "../contexts/AuthContext"
-import { supabase } from "../lib/supabase"
+import { useSupabase } from "../contexts/SupabaseProvider"
 
 interface GameInvitationCardProps {
   invitation: GameInvitation
@@ -15,11 +14,29 @@ interface GameInvitationCardProps {
 }
 
 const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onInvitationHandled }) => {
-  const { user, profile } = useAuth()
+  const { session, supabase } = useSupabase()
+  const user = session?.user
+  const [profile, setProfile] = useState<any>(null)
   const [acceptLoading, setAcceptLoading] = useState(false)
   const [declineLoading, setDeclineLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+
+  useEffect(() => {
+    if (user) {
+      fetchProfile()
+    }
+  }, [user])
+
+  const fetchProfile = async () => {
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", user!.id).single()
+      if (error) throw error
+      setProfile(data)
+    } catch (err) {
+      console.error("Error fetching profile:", err)
+    }
+  }
 
   const handleAccept = async () => {
     if (!user || !profile) {

@@ -1,24 +1,32 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useAuth } from "../contexts/AuthContext"
-import { supabase } from "../lib/supabase"
+import { useSupabase } from "../contexts/SupabaseProvider"
 import type { Player, GameSession } from "../types"
 import { generateId } from "../utils"
 import { usePWA } from "../hooks/usePWA"
 import { useGameStateSync } from "../hooks/useGameStateSync"
 import GameDashboard from "../components/GameDashboard"
+import FriendsPage from "../components/FriendsPage"
+import StatsPage from "../components/StatsPage"
+import ActiveGameScreen from "../components/ActiveGameScreen"
 import PWAInstall from "../components/PWAInstall"
 import AuthModal from "../components/auth/AuthModal"
 import EmailVerificationScreen from "../components/auth/EmailVerificationScreen"
+import Navbar from "../components/Navbar"
 
 export default function Home() {
-  const { user, loading: authLoading, emailVerified } = useAuth()
+  const { supabase, session, loading: authLoading } = useSupabase()
+  const user = session?.user
+  const emailVerified = user?.email_confirmed_at ? true : false
   const [players, setPlayers] = useState<Player[]>([])
   const [gameSessions, setGameSessions] = useState<GameSession[]>([])
   const [loading, setLoading] = useState(true)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [profile, setProfile] = useState<any | null>(null)
+
+  const [activeGameId, setActiveGameId] = useState<string | null>(null)
+  const [currentView, setCurrentView] = useState<string>("dashboard")
 
   usePWA()
 
@@ -210,67 +218,52 @@ export default function Home() {
   }
 
   const handleSelectGame = (gameId: string) => {
-    window.location.href = `/games/${gameId}`
+    setActiveGameId(gameId)
+    setCurrentView("activeGame")
   }
 
-  const handleDeleteGame = async (sessionId: string) => {
+  const handleViewChange = (view: string) => {
+    setCurrentView(view)
+    if (view !== "activeGame") {
+      setActiveGameId(null)
+    }
+  }
+
+  const handleEndGame = (updatedSession: GameSession) => {
+    setGameSessions((prevSessions) =>
+      prevSessions.map((session) => (session.id === updatedSession.id ? updatedSession : session)),
+    )
+    setCurrentView("dashboard")
+    setActiveGameId(null)
+  }
+
+  const handleDeleteGame = (gameId: string) => {
+    setGameSessions((prevSessions) => prevSessions.filter((session) => session.id !== gameId))
+  }
+
+  const handleAddNewPlayerGlobally = async (playerName: string): Promise<Player | null> => {
     try {
-      const gameToDelete = gameSessions.find((s) => s.id === sessionId)
+      // Check if player already exists in the global players list
+      const existingPlayer = players.find((p) => p.name.toLowerCase() === playerName.toLowerCase())
 
-      if (!gameToDelete) {
-        alert("Game not found.")
-        return
+      if (existingPlayer) {
+        return null // Player already exists
       }
 
-      setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
-
-      if (activeGameId === sessionId) {
-        setActiveGameId(null)
-        setCurrentView("dashboard")
+      // Create new temporary player
+      const newPlayer: Player = {
+        id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: playerName,
+        isTemporary: true,
       }
 
-      if (gameToDelete.isOwner === true) {
-        try {
-          const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
+      // Add to global players list
+      setPlayers((prevPlayers) => [...prevPlayers, newPlayer])
 
-          if (error) {
-            console.error("Database delete error:", error)
-            console.warn("Game removed from UI but database deletion failed")
-          } else {
-            console.log("✅ Game deleted successfully from database")
-          }
-        } catch (dbError) {
-          console.error("Database deletion failed:", dbError)
-        }
-      } else {
-        try {
-          const { error } = await supabase
-            .from("game_invitations")
-            .delete()
-            .eq("game_session_id", sessionId)
-            .eq("invitee_id", user!.id)
-
-          if (error) {
-            console.error("Error removing invitation record:", error)
-          } else {
-            console.log("✅ Invitation record removed")
-          }
-        } catch (error) {
-          console.warn("Could not remove invitation record (non-critical):", error)
-        }
-      }
-
-      console.log(gameToDelete.isOwner === true ? "Game deleted successfully" : "Game removed from dashboard")
+      return newPlayer
     } catch (error) {
-      console.error("Error deleting/removing game:", error)
-      setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
-
-      if (activeGameId === sessionId) {
-        setActiveGameId(null)
-        setCurrentView("dashboard")
-      }
-
-      console.warn("Game removed from dashboard, but there may have been database sync issues")
+      console.error("Error adding new player globally:", error)
+      return null
     }
   }
 
@@ -459,9 +452,6 @@ export default function Home() {
     }
   }
 
-  const [activeGameId, setActiveGameId] = useState<string | null>(null)
-  const [currentView, setCurrentView] = useState<string>("dashboard")
-
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-surface-main">
@@ -513,18 +503,68 @@ export default function Home() {
     )
   }
 
+  const renderCurrentView = () => {
+    switch (currentView) {
+      case "friends":
+        return (
+          <div className="min-h-screen flex flex-col bg-surface-main default-background">
+            <main className="flex-grow bg-transparent">
+              <FriendsPage />
+            </main>
+          </div>
+        )
+      case "stats":
+        return (
+          <div className="min-h-screen flex flex-col bg-surface-main default-background">
+            <main className="flex-grow bg-transparent">
+              <StatsPage />
+            </main>
+          </div>
+        )
+      case "activeGame":
+        const activeSession = gameSessions.find((session) => session.id === activeGameId)
+        if (!activeSession) {
+          setCurrentView("dashboard")
+          return null
+        }
+        return (
+          <ActiveGameScreen
+            session={activeSession}
+            players={players}
+            onUpdateSession={(updatedSession) => {
+              setGameSessions((prevSessions) =>
+                prevSessions.map((session) => (session.id === updatedSession.id ? updatedSession : session)),
+              )
+            }}
+            onEndGame={handleEndGame}
+            onAddNewPlayerGlobally={handleAddNewPlayerGlobally}
+            onNavigateToDashboard={() => setCurrentView("dashboard")}
+            user={user}
+          />
+        )
+      case "dashboard":
+      default:
+        return (
+          <div className="min-h-screen flex flex-col bg-surface-main dashboard-background">
+            <main className="flex-grow bg-transparent">
+              <GameDashboard
+                players={players}
+                gameSessions={gameSessions}
+                onStartNewGame={handleStartNewGame}
+                onSelectGame={handleSelectGame}
+                onDeleteGame={handleDeleteGame}
+              />
+            </main>
+          </div>
+        )
+    }
+  }
+
   return (
-    <div className="min-h-screen flex flex-col bg-surface-main dashboard-background">
-      <main className="flex-grow bg-transparent">
-        <GameDashboard
-          players={players}
-          gameSessions={gameSessions}
-          onStartNewGame={handleStartNewGame}
-          onSelectGame={handleSelectGame}
-          onDeleteGame={handleDeleteGame}
-        />
-      </main>
+    <>
+      <Navbar currentView={currentView} onViewChange={handleViewChange} />
+      {renderCurrentView()}
       <PWAInstall />
-    </div>
+    </>
   )
 }

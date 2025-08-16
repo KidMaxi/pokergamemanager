@@ -1,8 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useAuth } from "../../contexts/AuthContext"
-import { supabase, createAdminClient } from "../../lib/supabase"
+import { useSupabase } from "../../contexts/SupabaseProvider"
+import { createAdminClient } from "../../lib/supabase"
 import Modal from "../common/Modal"
 import Button from "../common/Button"
 import Card from "../common/Card"
@@ -30,7 +30,9 @@ interface UserData {
 }
 
 export default function AdminPanel({ isOpen, onClose }: AdminPanelProps) {
-  const { profile } = useAuth()
+  const { session, supabase } = useSupabase()
+  const user = session?.user
+  const [profile, setProfile] = useState<any>(null)
   const [activeTab, setActiveTab] = useState<"overview" | "users" | "database">("overview")
   const [stats, setStats] = useState<DatabaseStats | null>(null)
   const [users, setUsers] = useState<UserData[]>([])
@@ -42,6 +44,22 @@ export default function AdminPanel({ isOpen, onClose }: AdminPanelProps) {
   const [sqlQuery, setSqlQuery] = useState("")
   const [queryResult, setQueryResult] = useState<any>(null)
   const [queryLoading, setQueryLoading] = useState(false)
+
+  useEffect(() => {
+    if (isOpen && user) {
+      fetchProfile()
+    }
+  }, [isOpen, user])
+
+  const fetchProfile = async () => {
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", user!.id).single()
+      if (error) throw error
+      setProfile(data)
+    } catch (err) {
+      console.error("Error fetching profile:", err)
+    }
+  }
 
   const fetchStats = async () => {
     try {

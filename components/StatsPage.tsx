@@ -3,8 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { useAuth } from "../contexts/AuthContext"
-import { supabase } from "../lib/supabase"
+import { useSupabase } from "../contexts/SupabaseProvider"
 import { formatCurrency } from "../utils"
 import Card from "./common/Card"
 
@@ -16,7 +15,8 @@ interface UserStats {
 }
 
 const StatsPage: React.FC = () => {
-  const { user } = useAuth()
+  const { session, supabase } = useSupabase()
+  const user = session?.user
   const [stats, setStats] = useState<UserStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

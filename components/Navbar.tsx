@@ -1,10 +1,8 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
-import { useRouter, usePathname } from "next/navigation"
-import { useAuth } from "../contexts/AuthContext"
-import { supabase } from "../lib/supabase"
+import { useState } from "react"
+import { useSupabase } from "../contexts/SupabaseProvider"
 import { formatCurrency, formatDate } from "../utils"
 import Modal from "./common/Modal"
 import Input from "./common/Input"
@@ -17,10 +15,15 @@ interface UserStats {
   last_game_date: string | null
 }
 
-const Navbar: React.FC = () => {
-  const router = useRouter()
-  const pathname = usePathname()
-  const { user, signOut } = useAuth()
+interface NavbarProps {
+  currentView: string
+  onViewChange: (view: string) => void
+}
+
+const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
+  const { supabase, session, loading: authLoading } = useSupabase()
+  const user = session?.user
+
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [fullName, setFullName] = useState("")
   const [loading, setLoading] = useState(false)
@@ -29,24 +32,6 @@ const Navbar: React.FC = () => {
   const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
-
-  const getActiveView = () => {
-    if (pathname === "/") return "dashboard"
-    if (pathname === "/friends") return "friends"
-    if (pathname === "/stats") return "stats"
-    if (pathname?.startsWith("/games/")) return "activeGame"
-    return "dashboard"
-  }
-
-  const activeView = getActiveView()
-
-  useEffect(() => {
-    if (user) {
-      fetchPendingRequests()
-    } else {
-      setPendingRequestsCount(0)
-    }
-  }, [user])
 
   const handleOpenProfile = async () => {
     if (user) {
@@ -113,7 +98,7 @@ const Navbar: React.FC = () => {
   const handleSignOut = async () => {
     try {
       setIsProfileModalOpen(false)
-      const { error } = await signOut()
+      const { error } = await supabase.auth.signOut()
 
       if (error) {
         console.error("Sign out error:", error)
@@ -136,7 +121,7 @@ const Navbar: React.FC = () => {
   }
 
   const handleTitleClick = () => {
-    router.push("/")
+    onViewChange("dashboard")
   }
 
   const handleRefresh = async () => {
@@ -221,9 +206,9 @@ const Navbar: React.FC = () => {
 
             <div className="flex items-center space-x-1 sm:space-x-2">
               <button
-                onClick={() => router.push("/")}
+                onClick={() => onViewChange("dashboard")}
                 className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  activeView === "dashboard"
+                  currentView === "dashboard"
                     ? "bg-brand-primary text-white"
                     : "text-text-secondary hover:text-text-primary"
                 }`}
@@ -232,9 +217,9 @@ const Navbar: React.FC = () => {
               </button>
 
               <button
-                onClick={() => router.push("/friends")}
+                onClick={() => onViewChange("friends")}
                 className={`relative px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  activeView === "friends"
+                  currentView === "friends"
                     ? "bg-brand-primary text-white"
                     : "text-text-secondary hover:text-text-primary"
                 }`}
@@ -248,9 +233,11 @@ const Navbar: React.FC = () => {
               </button>
 
               <button
-                onClick={() => router.push("/stats")}
+                onClick={() => onViewChange("stats")}
                 className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  activeView === "stats" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+                  currentView === "stats"
+                    ? "bg-brand-primary text-white"
+                    : "text-text-secondary hover:text-text-primary"
                 }`}
               >
                 Stats
