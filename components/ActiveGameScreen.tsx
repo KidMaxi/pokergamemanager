@@ -35,8 +35,6 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const [error, setError] = useState("")
   const [userFriends, setUserFriends] = useState<string[]>([])
   const [finalChipAmounts, setFinalChipAmounts] = useState<Record<string, string>>({})
-  const [showFinalSummary, setShowFinalSummary] = useState(false)
-  const [showCompletedGameSummary, setShowCompletedGameSummary] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
   // Sync local session with prop changes
@@ -59,12 +57,6 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       setFinalChipAmounts(initialAmounts)
     }
   }, [showEndGameModal, localSession.playersInGame])
-
-  useEffect(() => {
-    if (localSession.status === "completed" && !showCompletedGameSummary) {
-      setShowCompletedGameSummary(true)
-    }
-  }, [localSession.status])
 
   const loadUserFriends = async () => {
     if (!user) return
@@ -1048,109 +1040,6 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             </div>
           </div>
         </Modal>
-
-        {/* Final Summary Modal */}
-        {showFinalSummary && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-bold text-green-400">🎉 Game Complete!</h2>
-                <button onClick={() => setShowFinalSummary(false)} className="text-gray-400 hover:text-white text-2xl">
-                  ×
-                </button>
-              </div>
-
-              {/* Game Summary */}
-              <div className="bg-gray-700 p-6 rounded-lg mb-6">
-                <h3 className="text-xl font-bold text-white mb-4">Game Summary</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                  <div>
-                    <p className="text-gray-400 text-sm">Duration</p>
-                    <p className="text-white font-bold">{formatElapsedTime(localSession.startTime)}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-sm">Total Players</p>
-                    <p className="text-white font-bold">{localSession.playersInGame.length}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-sm">Total Buy-ins</p>
-                    <p className="text-white font-bold">${calculateTotalBuyIns().toFixed(2)}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-sm">Point Rate</p>
-                    <p className="text-white font-bold">${(localSession.pointToCashRate || 0.1).toFixed(2)}/pt</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Player Results */}
-              <div className="bg-gray-700 p-6 rounded-lg mb-6">
-                <h3 className="text-xl font-bold text-white mb-4">Final Results</h3>
-                <div className="space-y-3">
-                  {localSession.playersInGame
-                    .sort((a, b) => getPlayerProfitLoss(b) - getPlayerProfitLoss(a))
-                    .map((player, index) => {
-                      const profitLoss = getPlayerProfitLoss(player)
-                      const totalBuyIn = getPlayerTotalBuyIn(player)
-                      return (
-                        <div
-                          key={player.playerId}
-                          className="flex items-center justify-between bg-gray-600 p-4 rounded-lg"
-                        >
-                          <div className="flex items-center space-x-4">
-                            <div className="flex items-center space-x-2">
-                              <span className="text-2xl">
-                                {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "🏅"}
-                              </span>
-                              <span className="text-lg font-bold text-white">{player.name}</span>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm text-gray-400">
-                              Buy-in: ${totalBuyIn.toFixed(2)} → Cash-out: ${player.cashOutAmount.toFixed(2)}
-                            </p>
-                            <p className={`text-lg font-bold ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                              {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
-                            </p>
-                          </div>
-                        </div>
-                      )
-                    })}
-                </div>
-              </div>
-
-              {/* Payment Settlement */}
-              <PaymentSummary session={localSession} className="mb-6" />
-
-              <div className="flex justify-center">
-                <Button
-                  onClick={() => setShowFinalSummary(false)}
-                  className="bg-green-600 hover:bg-green-700 text-white py-3 px-8 rounded-lg font-semibold"
-                >
-                  Close Summary
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Completed Game Summary Modal */}
-        {showCompletedGameSummary && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-slate-800 rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-green-400">Game Summary</h2>
-                <button
-                  onClick={() => setShowCompletedGameSummary(false)}
-                  className="text-gray-400 hover:text-white text-2xl"
-                >
-                  ×
-                </button>
-              </div>
-              <PaymentSummary session={localSession} />
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

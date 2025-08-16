@@ -2,9 +2,20 @@ import { getSupabaseBrowser } from "@/lib/supabase"
 import { roundDollars1, toDollarStr1, toDimesInt } from "@/lib/money"
 import type { GameSession, PlayerInGame } from "@/types"
 
-function perPlayer(p: PlayerInGame) {
+function perPlayer(p: PlayerInGame, pointToCashRate: number) {
   const buy = roundDollars1(p.buyIns.reduce((s, b) => s + Number(b.amount), 0))
-  const cash = roundDollars1(p.cashOutAmount || 0)
+  const cash = roundDollars1(p.cash || p.pointStack * pointToCashRate)
+
+  console.log(`[v0] Player ${p.name} calculation:`, {
+    pointStack: p.pointStack,
+    pointToCashRate: pointToCashRate,
+    playerCash: p.cash,
+    rawCash: p.pointStack * pointToCashRate,
+    finalCash: cash,
+    totalBuyIn: buy,
+    netProfit: cash - buy,
+  })
+
   return {
     buy,
     cash,
@@ -33,7 +44,7 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     .filter((p) => p.profileId)
     .map((p) => ({
       profileId: p.profileId!,
-      ...perPlayer(p),
+      ...perPlayer(p, session.pointToCashRate),
     }))
 
   if (!rows.length) {
@@ -58,6 +69,17 @@ export async function finalizeAndUpdateStats(session: GameSession) {
   })
 
   if (error) {
+    if (
+      error.message?.includes('relation "public.game_finalizations" does not exist') ||
+      error.message?.includes("function profile_apply_game_result") ||
+      error.code === "42P01" ||
+      error.code === "42883"
+    ) {
+      console.error("Database schema not set up. Please run the SQL script: scripts/fix-stats-pipeline.sql")
+      throw new Error(
+        "Database schema missing. Run scripts/fix-stats-pipeline.sql to set up the stats tracking system.",
+      )
+    }
     console.error("RPC error:", error)
     throw error
   }
