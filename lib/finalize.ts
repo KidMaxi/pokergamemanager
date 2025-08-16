@@ -71,13 +71,16 @@ export async function finalizeAndUpdateStats(session: GameSession) {
   if (error) {
     if (
       error.message?.includes('relation "public.game_finalizations" does not exist') ||
+      error.message?.includes('relation "public.game_player_results" does not exist') ||
       error.message?.includes("function profile_apply_game_result") ||
       error.code === "42P01" ||
       error.code === "42883"
     ) {
-      console.error("Database schema not set up. Please run the SQL script: scripts/fix-stats-pipeline.sql")
+      console.error(
+        "Database schema not set up. Please run the SQL script: scripts/implement-comprehensive-results.sql",
+      )
       throw new Error(
-        "Database schema missing. Run scripts/fix-stats-pipeline.sql to set up the stats tracking system.",
+        "Database schema missing. Run scripts/implement-comprehensive-results.sql to set up the comprehensive results tracking system.",
       )
     }
     console.error("RPC error:", error)
@@ -85,4 +88,37 @@ export async function finalizeAndUpdateStats(session: GameSession) {
   }
 
   console.log(`[v0] Successfully finalized game and updated stats for ${results.length} players`)
+}
+
+export async function getGameResults(gameId: string) {
+  const supabase = getSupabaseBrowser()
+
+  const { data, error } = await supabase
+    .from("game_player_results")
+    .select(`
+      profile_id,
+      buyin_dollars,
+      cashout_dollars,
+      net_dollars,
+      winner,
+      profiles!inner(full_name)
+    `)
+    .eq("game_id", gameId)
+    .order("net_dollars", { ascending: false })
+
+  if (error) {
+    console.error("Error fetching game results:", error)
+    return []
+  }
+
+  return (
+    data?.map((result) => ({
+      profileId: result.profile_id,
+      name: result.profiles.full_name,
+      buyinDollars: Number(result.buyin_dollars),
+      cashoutDollars: Number(result.cashout_dollars),
+      netDollars: Number(result.net_dollars),
+      winner: result.winner,
+    })) || []
+  )
 }

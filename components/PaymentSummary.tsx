@@ -1,10 +1,11 @@
 "use client"
 
 import type React from "react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import type { GameSession } from "../types"
 import { formatCurrency } from "../utils"
 import { calculatePayments, formatPaymentSummary, type PlayerResult } from "../utils/paymentCalculator"
+import { getGameResults } from "../lib/finalize"
 import Card from "./common/Card"
 
 interface PaymentSummaryProps {
@@ -14,20 +15,51 @@ interface PaymentSummaryProps {
 
 const PaymentSummary: React.FC<PaymentSummaryProps> = ({ session, className = "" }) => {
   const [copySuccess, setCopySuccess] = useState(false)
+  const [persistedResults, setPersistedResults] = useState<any[]>([])
+  const [loadingResults, setLoadingResults] = useState(false)
+
+  useEffect(() => {
+    if (session.status === "completed" && session.dbId) {
+      setLoadingResults(true)
+      getGameResults(session.dbId)
+        .then((results) => {
+          console.log("[v0] Fetched persisted game results:", results)
+          setPersistedResults(results)
+        })
+        .catch((error) => {
+          console.error("[v0] Failed to fetch persisted results:", error)
+          setPersistedResults([]) // Fall back to local calculation
+        })
+        .finally(() => {
+          setLoadingResults(false)
+        })
+    }
+  }, [session.status, session.dbId])
 
   const paymentData = useMemo(() => {
     if (session.status !== "completed") return null
 
-    // Calculate net profit/loss for each player
-    const playerResults: PlayerResult[] = session.playersInGame.map((player) => {
-      const totalBuyIn = player.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
-      const netAmount = player.cashOutAmount - totalBuyIn
+    let playerResults: PlayerResult[]
 
-      return {
-        name: player.name,
-        netAmount: netAmount,
-      }
-    })
+    if (persistedResults.length > 0) {
+      console.log("[v0] Using persisted results for payment calculation")
+      playerResults = persistedResults.map((result) => ({
+        name: result.name,
+        netAmount: result.netDollars,
+      }))
+    } else {
+      console.log("[v0] Using local calculation for payment summary")
+      // Calculate net profit/loss for each player from local state
+      playerResults = session.playersInGame.map((player) => {
+        const totalBuyIn = player.buyIns.reduce((sum, buyIn) => sum + buyIn.amount, 0)
+        const netAmount = player.cashOutAmount - totalBuyIn
+
+        return {
+          name: player.name,
+          netAmount: netAmount,
+        }
+      })
+    }
 
     const transactions = calculatePayments(playerResults)
     const summary = formatPaymentSummary(transactions)
@@ -37,7 +69,7 @@ const PaymentSummary: React.FC<PaymentSummaryProps> = ({ session, className = ""
       transactions,
       summary,
     }
-  }, [session])
+  }, [session, persistedResults])
 
   const handleCopyToClipboard = async () => {
     if (!paymentData?.summary) return
@@ -66,6 +98,21 @@ const PaymentSummary: React.FC<PaymentSummaryProps> = ({ session, className = ""
 
   if (!paymentData || session.status !== "completed") {
     return null
+  }
+
+  if (loadingResults) {
+    return (
+      <div className={`${className}`}>
+        <Card
+          className="bg-gradient-to-r from-green-900 to-blue-900 border-2 border-brand-primary"
+          title="💰 Payment Settlement"
+        >
+          <div className="text-center p-6">
+            <p className="text-text-secondary">Loading game results...</p>
+          </div>
+        </Card>
+      </div>
+    )
   }
 
   const { transactions, summary } = paymentData
