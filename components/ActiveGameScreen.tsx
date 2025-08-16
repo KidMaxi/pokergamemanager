@@ -132,6 +132,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       return
     }
 
+    if (localSession.playersInGame.length >= 99) {
+      setError("Maximum 99 players per game reached")
+      return
+    }
+
     const existingPlayerInGame = localSession.playersInGame.find(
       (p) => p.name.toLowerCase() === newPlayerName.trim().toLowerCase(),
     )
@@ -578,15 +583,26 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             <Button
               onClick={() => setShowAddPlayerModal(true)}
               className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-lg font-semibold"
+              disabled={localSession.playersInGame.length >= 99}
             >
               Add New Player to Game
             </Button>
             <Button
               onClick={() => setShowAddFriendModal(true)}
               className="bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-semibold"
+              disabled={localSession.playersInGame.length >= 99}
             >
               Add Friend to Game
             </Button>
+          </div>
+        )}
+
+        {!isGameCompleted && (
+          <div className="mb-4 text-center">
+            <p className="text-sm text-gray-400">Players in game: {localSession.playersInGame.length}/99</p>
+            {localSession.playersInGame.length >= 99 && (
+              <p className="text-sm text-yellow-400 mt-1">Maximum 99 players reached for this game</p>
+            )}
           </div>
         )}
 
@@ -759,6 +775,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             <p className="text-sm text-gray-400">
               Player will automatically buy-in for {formatCurrency(localSession.standardBuyInAmount)}
             </p>
+            <p className="text-xs text-gray-500">Players in game: {localSession.playersInGame.length}/99</p>
             <div className="flex justify-end gap-2">
               <Button
                 onClick={() => {
@@ -770,7 +787,11 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
               >
                 Cancel
               </Button>
-              <Button onClick={handleAddPlayer} variant="primary" disabled={loading}>
+              <Button
+                onClick={handleAddPlayer}
+                variant="primary"
+                disabled={loading || localSession.playersInGame.length >= 99}
+              >
                 {loading ? "Adding..." : "Add Player"}
               </Button>
             </div>
