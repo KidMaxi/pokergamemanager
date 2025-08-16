@@ -62,7 +62,7 @@ export async function finalizeAndUpdateStats(session: GameSession) {
 
   console.log(`[v0] Calling RPC with results:`, results)
 
-  const { error } = await supabase.rpc("profile_apply_game_result", {
+  const { error } = await supabase.rpc("profile_finalize_game", {
     p_game_id: gameId,
     p_owner_id: ownerId,
     p_results: results,
@@ -72,15 +72,15 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     if (
       error.message?.includes('relation "public.game_finalizations" does not exist') ||
       error.message?.includes('relation "public.game_player_results" does not exist') ||
-      error.message?.includes("function profile_apply_game_result") ||
+      error.message?.includes("function profile_finalize_game") ||
       error.code === "42P01" ||
       error.code === "42883"
     ) {
       console.error(
-        "Database schema not set up. Please run the SQL script: scripts/implement-comprehensive-results.sql",
+        "Database schema not set up. Please run the SQL script: scripts/implement-comprehensive-stats-final.sql",
       )
       throw new Error(
-        "Database schema missing. Run scripts/implement-comprehensive-results.sql to set up the comprehensive results tracking system.",
+        "Database schema missing. Run scripts/implement-comprehensive-stats-final.sql to set up the comprehensive results tracking system.",
       )
     }
     console.error("RPC error:", error)
