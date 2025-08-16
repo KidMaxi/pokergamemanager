@@ -12,7 +12,6 @@ import StatsPage from "../components/StatsPage"
 import ActiveGameScreen from "../components/ActiveGameScreen"
 import PWAInstall from "../components/PWAInstall"
 import AuthModal from "../components/auth/AuthModal"
-import EmailVerificationScreen from "../components/auth/EmailVerificationScreen"
 import Navbar from "../components/Navbar"
 
 export default function Home() {
@@ -229,16 +228,80 @@ export default function Home() {
     }
   }
 
-  const handleEndGame = (updatedSession: GameSession) => {
-    setGameSessions((prevSessions) =>
-      prevSessions.map((session) => (session.id === updatedSession.id ? updatedSession : session)),
-    )
-    setCurrentView("dashboard")
-    setActiveGameId(null)
+  const handleEndGame = async (updatedSession: GameSession) => {
+    try {
+      console.log("🏁 Ending game and updating stats:", updatedSession.id)
+
+      const playersWithProfileIds = updatedSession.playersInGame.map((player) => {
+        // Try to match player name with user profile
+        if (player.name === profile?.full_name && !player.profileId) {
+          return { ...player, profileId: user!.id }
+        }
+        return player
+      })
+
+      // Update session status to completed
+      const completedSession = {
+        ...updatedSession,
+        playersInGame: playersWithProfileIds,
+        status: "completed" as const,
+        endTime: updatedSession.endTime || new Date().toISOString(),
+        dbId: updatedSession.dbId || updatedSession.id,
+      }
+
+      // Update database with completed session
+      await updateGameSessionInDatabase(completedSession)
+
+      try {
+        const { finalizeAndUpdateStats } = await import("../lib/finalize")
+        await finalizeAndUpdateStats(completedSession)
+        console.log("✅ Stats updated successfully")
+      } catch (statsError) {
+        console.error("Error updating stats:", statsError)
+        console.warn("Game completed but stats could not be updated:", statsError.message)
+      }
+
+      // Update local state
+      setGameSessions((prevSessions) =>
+        prevSessions.map((session) => (session.id === completedSession.id ? completedSession : session)),
+      )
+
+      setCurrentView("dashboard")
+      setActiveGameId(null)
+
+      alert("Game completed successfully!")
+    } catch (error) {
+      console.error("Error ending game:", error)
+      alert("Failed to complete game. Please try again.")
+    }
   }
 
-  const handleDeleteGame = (gameId: string) => {
-    setGameSessions((prevSessions) => prevSessions.filter((session) => session.id !== gameId))
+  const handleDeleteGame = async (gameId: string) => {
+    try {
+      console.log("🗑️ Deleting game from database:", gameId)
+
+      const { error } = await supabase.from("game_sessions").delete().eq("id", gameId).eq("user_id", user!.id)
+
+      if (error) {
+        console.error("Error deleting game from database:", error)
+        alert("Failed to delete game from database. Please try again.")
+        return
+      }
+
+      console.log("✅ Game deleted from database successfully")
+
+      // Remove from local state only after successful database deletion
+      setGameSessions((prevSessions) => prevSessions.filter((session) => session.id !== gameId))
+
+      // If this was the active game, navigate back to dashboard
+      if (activeGameId === gameId) {
+        setActiveGameId(null)
+        setCurrentView("dashboard")
+      }
+    } catch (error) {
+      console.error("Error deleting game:", error)
+      alert("Failed to delete game. Please try again.")
+    }
   }
 
   const handleAddNewPlayerGlobally = async (playerName: string): Promise<Player | null> => {
@@ -290,6 +353,15 @@ export default function Home() {
   const saveGameSessionToDatabase = async (session: any) => {
     try {
       console.log("💾 Saving game session to database:", session.id)
+
+      if (session.dbId) {
+        try {
+          const { createGameAndStoreId } = await import("../lib/createGame")
+          await createGameAndStoreId(session.name, session.pointToCashRate, session)
+        } catch (error) {
+          console.warn("Could not create persistent game record:", error)
+        }
+      }
 
       const insertData: any = {
         id: session.id,
@@ -486,10 +558,6 @@ export default function Home() {
         <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} initialMode="signin" />
       </div>
     )
-  }
-
-  if (user && !emailVerified) {
-    return <EmailVerificationScreen />
   }
 
   if (loading) {

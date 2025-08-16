@@ -19,8 +19,15 @@ export async function finalizeAndUpdateStats(session: GameSession) {
   const gameId = session.dbId // must be the DB game uuid
 
   if (!ownerId || !gameId) {
-    throw new Error("Missing ownerId or gameId")
+    console.error("Finalize error - missing required data:", {
+      ownerId: !!ownerId,
+      gameId: !!gameId,
+      sessionId: session.id,
+    })
+    throw new Error(`Missing required data for finalization: ${!ownerId ? "ownerId" : "gameId"}`)
   }
+
+  console.log(`[v0] Starting finalization for game ${gameId} with ${session.playersInGame?.length || 0} players`)
 
   const rows = (session.playersInGame || [])
     .filter((p) => p.profileId)
@@ -29,7 +36,10 @@ export async function finalizeAndUpdateStats(session: GameSession) {
       ...perPlayer(p),
     }))
 
-  if (!rows.length) return
+  if (!rows.length) {
+    console.warn("No players with profileId found - no stats to update")
+    return
+  }
 
   const maxNet = Math.max(...rows.map((r) => r.netDimes))
   const results = rows.map((r) => ({
@@ -39,11 +49,18 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     winner: r.netDimes === maxNet,
   }))
 
+  console.log(`[v0] Calling RPC with results:`, results)
+
   const { error } = await supabase.rpc("profile_apply_game_result", {
     p_game_id: gameId,
     p_owner_id: ownerId,
     p_results: results,
   })
 
-  if (error) throw error
+  if (error) {
+    console.error("RPC error:", error)
+    throw error
+  }
+
+  console.log(`[v0] Successfully finalized game and updated stats for ${results.length} players`)
 }

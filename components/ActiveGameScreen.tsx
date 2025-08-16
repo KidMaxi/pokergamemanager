@@ -37,6 +37,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   const [finalChipAmounts, setFinalChipAmounts] = useState<Record<string, string>>({})
   const [showFinalSummary, setShowFinalSummary] = useState(false)
   const [showCompletedGameSummary, setShowCompletedGameSummary] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
 
   // Sync local session with prop changes
   useEffect(() => {
@@ -297,42 +298,40 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
   }
 
   const handleEndGame = async () => {
-    const invalidAmounts = Object.entries(finalChipAmounts).filter(
-      ([playerId, amount]) => amount === "" || Number.parseFloat(amount) < 0,
-    )
+    try {
+      setIsLoading(true)
+      setError("")
 
-    if (invalidAmounts.length > 0) {
-      setError("All final chip amounts must be filled and ≥ 0")
-      return
-    }
+      const updatedPlayersInGame = session.playersInGame.map((player) => {
+        // If player doesn't have profileId but matches current user's name, assign it
+        if (!player.profileId && user && player.name === user.email?.split("@")[0]) {
+          return { ...player, profileId: user.id }
+        }
+        return player
+      })
 
-    const updatedPlayersInGame = localSession.playersInGame.map((player) => {
-      const finalAmount = Number.parseFloat(finalChipAmounts[player.playerId] || "0")
-      const finalCashValue = finalAmount * (localSession.pointToCashRate || 0.1)
-      const totalBuyInAmount = (player.buyIns || []).reduce((sum, buyIn) => sum + buyIn.amount, 0)
-
-      return {
-        ...player,
-        pointStack: finalAmount,
-        cashOutAmount: finalCashValue, // Always set based on final chip amount
-        hasCashedOut: true, // Mark as cashed out for final settlement
-        profitLoss: finalCashValue - totalBuyInAmount,
+      const finalSession: GameSession = {
+        ...session,
+        playersInGame: updatedPlayersInGame,
+        status: "completed" as const,
+        endTime: new Date().toISOString(),
+        currentPhysicalPointsOnTable: 0,
+        dbId: session.dbId || session.id,
       }
-    })
 
-    const finalSession = {
-      ...localSession,
-      playersInGame: updatedPlayersInGame,
-      status: "completed" as const,
-      endTime: new Date().toISOString(),
-      currentPhysicalPointsOnTable: 0, // All chips are now settled
+      console.log("🏁 Finalizing game with stats tracking", {
+        gameId: finalSession.id,
+        dbId: finalSession.dbId,
+        playersWithProfileIds: finalSession.playersInGame.filter((p) => p.profileId).length,
+      })
+
+      await onEndGame(finalSession)
+    } catch (error) {
+      console.error("Error finalizing game:", error)
+      setError("Failed to finalize game. Please try again.")
+    } finally {
+      setIsLoading(false)
     }
-
-    updatePlayerStatistics(finalSession)
-
-    onEndGame(finalSession)
-    setShowEndGameModal(false)
-    setShowFinalSummary(true)
   }
 
   const updatePlayerStatistics = async (session: GameSession) => {
