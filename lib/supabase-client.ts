@@ -1,12 +1,6 @@
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
-import { createClient } from "@supabase/supabase-js"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "./database.types"
-
-function need(name: string, v?: string): string {
-  if (!v) throw new Error(`${name} is required`)
-  return v
-}
 
 let _browser: SupabaseClient<Database> | null = null
 
@@ -21,20 +15,5 @@ export function getSupabaseBrowser(): SupabaseClient<Database> {
   _browser = createClientComponentClient<Database>({ supabaseUrl: url, supabaseKey: key })
   return _browser
 }
-
-export function createAdminClient(): SupabaseClient<Database> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://elukerudivqbkgdjwqvz.supabase.co"
-  const serviceRoleKey = need("SUPABASE_SERVICE_ROLE_KEY", process.env.SUPABASE_SERVICE_ROLE_KEY)
-
-  return createClient<Database>(url, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  })
-}
-
-// Legacy exports for backward compatibility
-export const legacyCreateClientComponentClient = getSupabaseBrowser
 
 export const supabase = getSupabaseBrowser()
