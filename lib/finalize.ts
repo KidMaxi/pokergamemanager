@@ -1,15 +1,15 @@
 import { getSupabaseBrowser } from "@/lib/supabase"
-import { roundDollars1, toDollarStr1, toDimesInt } from "@/lib/money"
+import { roundDollars1, toDimesInt } from "@/lib/money"
 import type { GameSession, PlayerInGame } from "@/types"
 
 function perPlayer(p: PlayerInGame, pointToCashRate: number) {
   const buy = roundDollars1(p.buyIns.reduce((s, b) => s + Number(b.amount), 0))
-  const cash = roundDollars1(p.cash || p.pointStack * pointToCashRate)
+  const cash = p.cashOutAmount > 0 ? roundDollars1(p.cashOutAmount) : roundDollars1(p.pointStack * pointToCashRate)
 
   console.log(`[v0] Player ${p.name} calculation:`, {
     pointStack: p.pointStack,
     pointToCashRate: pointToCashRate,
-    playerCash: p.cash,
+    playerCashOutAmount: p.cashOutAmount,
     rawCash: p.pointStack * pointToCashRate,
     finalCash: cash,
     totalBuyIn: buy,
@@ -44,6 +44,7 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     .filter((p) => p.profileId)
     .map((p) => ({
       profileId: p.profileId!,
+      name: p.name,
       ...perPlayer(p, session.pointToCashRate),
     }))
 
@@ -53,45 +54,81 @@ export async function finalizeAndUpdateStats(session: GameSession) {
   }
 
   const maxNet = Math.max(...rows.map((r) => r.netDimes))
-  const results = rows.map((r) => ({
-    profile_id: r.profileId,
-    buyin_dollars: toDollarStr1(r.buy),
-    cashout_dollars: toDollarStr1(r.cash),
-    winner: r.netDimes === maxNet,
-  }))
 
-  console.log(`[v0] Calling RPC with results:`, results)
+  // Process each player individually with direct database updates
+  for (const row of rows) {
+    const profitLoss = row.cash - row.buy
+    const isWinner = row.netDimes === maxNet
 
-  const { error } = await supabase.rpc("profile_finalize_game", {
-    p_game_id: gameId,
-    p_owner_id: ownerId,
-    p_results: results,
-  })
+    console.log(
+      `[v0] Player ${row.name}: Buy-ins = ${row.buy}, Cash-out = ${row.cash}, P/L = ${profitLoss}, isWinner = ${isWinner}`,
+    )
 
-  if (error) {
-    if (
-      error.message?.includes('relation "public.game_finalizations" does not exist') ||
-      error.message?.includes('relation "public.game_player_results" does not exist') ||
-      error.message?.includes("function profile_finalize_game") ||
-      error.code === "42P01" ||
-      error.code === "42883"
-    ) {
-      console.error(
-        "Database schema not set up. Please run the SQL script: scripts/implement-comprehensive-stats-final.sql",
-      )
-      throw new Error(
-        "Database schema missing. Run scripts/implement-comprehensive-stats-final.sql to set up the comprehensive results tracking system.",
-      )
+    // Fetch current profile data to get current values
+    const { data: currentProfile, error: fetchError } = await supabase
+      .from("profiles")
+      .select("games_played, all_time_profit_loss, total_wins")
+      .eq("id", row.profileId)
+      .single()
+
+    if (fetchError) {
+      console.error(`[v0] Error fetching current profile for ${row.name}:`, fetchError)
+      continue
     }
-    console.error("RPC error:", error)
-    throw error
+
+    // Calculate new values explicitly
+    const newGamesPlayed = (currentProfile.games_played || 0) + 1
+    const newProfitLoss = (currentProfile.all_time_profit_loss || 0) + profitLoss
+    const newTotalWins = (currentProfile.total_wins || 0) + (isWinner ? 1 : 0)
+
+    console.log(
+      `[v0] Updating ${row.name}: games_played ${currentProfile.games_played || 0} -> ${newGamesPlayed}, all_time_profit_loss ${currentProfile.all_time_profit_loss || 0} -> ${newProfitLoss}, total_wins ${currentProfile.total_wins || 0} -> ${newTotalWins}`,
+    )
+
+    // Update with explicit values
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        games_played: newGamesPlayed,
+        all_time_profit_loss: newProfitLoss,
+        total_wins: newTotalWins,
+      })
+      .eq("id", row.profileId)
+
+    if (updateError) {
+      console.error(`[v0] Error updating profile for ${row.name}:`, updateError)
+      throw updateError
+    }
+
+    console.log(`[v0] ✅ Successfully updated profile for ${row.name}`)
+
+    // Store the result in game_player_results table for summary display
+    const { error: resultError } = await supabase.from("game_player_results").upsert({
+      game_id: gameId,
+      profile_id: row.profileId,
+      buyin_dollars: row.buy,
+      cashout_dollars: row.cash,
+      net_dollars: profitLoss,
+      winner: isWinner,
+    })
+
+    if (resultError) {
+      console.error(`[v0] Error storing game result for ${row.name}:`, resultError)
+      // Don't throw here - profile update is more important
+    }
   }
 
-  console.log(`[v0] Successfully finalized game and updated stats for ${results.length} players`)
+  console.log(`[v0] Successfully finalized game and updated stats for ${rows.length} players`)
+
+  console.log(`[v0] Verifying results were stored in database...`)
+  const storedResults = await getGameResults(gameId)
+  console.log(`[v0] Stored results verification:`, storedResults)
 }
 
 export async function getGameResults(gameId: string) {
   const supabase = getSupabaseBrowser()
+
+  console.log(`[v0] Fetching game results for gameId: ${gameId}`)
 
   const { data, error } = await supabase
     .from("game_player_results")
@@ -106,12 +143,14 @@ export async function getGameResults(gameId: string) {
     .eq("game_id", gameId)
     .order("net_dollars", { ascending: false })
 
+  console.log(`[v0] Raw database query result:`, { data, error })
+
   if (error) {
     console.error("Error fetching game results:", error)
     return []
   }
 
-  return (
+  const results =
     data?.map((result) => ({
       profileId: result.profile_id,
       name: result.profiles.full_name,
@@ -120,5 +159,7 @@ export async function getGameResults(gameId: string) {
       netDollars: Number(result.net_dollars),
       winner: result.winner,
     })) || []
-  )
+
+  console.log(`[v0] Processed game results:`, results)
+  return results
 }
