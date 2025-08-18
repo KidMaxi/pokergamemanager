@@ -299,21 +299,35 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       setIsLoading(true)
       setError("")
 
-      const updatedPlayersInGame = session.playersInGame.map((player) => {
+      const updatedPlayersInGame = localSession.playersInGame.map((player) => {
         // If player doesn't have profileId but matches current user's name, assign it
+        let updatedPlayer = player
         if (!player.profileId && user && player.name === user.email?.split("@")[0]) {
-          return { ...player, profileId: user.id }
+          updatedPlayer = { ...player, profileId: user.id }
         }
-        return player
+
+        // Update cashout amount based on final chip input from end game modal
+        const finalChips = Number.parseFloat(finalChipAmounts[player.playerId] || "0")
+        if (finalChips > 0) {
+          const finalCashAmount = finalChips * (localSession.pointValue || 0.1)
+          console.log(`[v0] Updating ${player.name} final cashout: ${finalChips} chips = $${finalCashAmount}`)
+          updatedPlayer = {
+            ...updatedPlayer,
+            cashOutAmount: finalCashAmount,
+            pointStack: finalChips,
+          }
+        }
+
+        return updatedPlayer
       })
 
       const finalSession: GameSession = {
-        ...session,
+        ...localSession, // Use localSession to preserve cashout data
         playersInGame: updatedPlayersInGame,
         status: "completed" as const,
         endTime: new Date().toISOString(),
         currentPhysicalPointsOnTable: 0,
-        dbId: session.dbId || session.id,
+        dbId: localSession.dbId || localSession.id, // Use localSession.dbId
       }
 
       console.log("🏁 Finalizing game with stats tracking", {
