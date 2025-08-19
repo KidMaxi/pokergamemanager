@@ -53,21 +53,20 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     return
   }
 
-  const maxNet = Math.max(...rows.map((r) => r.netDimes))
-
   // Process each player individually with direct database updates
   for (const row of rows) {
     const profitLoss = row.cash - row.buy
-    const isWinner = row.netDimes === maxNet
+    const isWinner = profitLoss > 0 // Winner = positive P/L
+    const isLoser = profitLoss < 0 // Loser = negative P/L
 
     console.log(
-      `[v0] Player ${row.name}: Buy-ins = ${row.buy}, Cash-out = ${row.cash}, P/L = ${profitLoss}, isWinner = ${isWinner}`,
+      `[v0] Player ${row.name}: Buy-ins = ${row.buy}, Cash-out = ${row.cash}, P/L = ${profitLoss}, isWinner = ${isWinner}, isLoser = ${isLoser}`,
     )
 
     // Fetch current profile data to get current values
     const { data: currentProfile, error: fetchError } = await supabase
       .from("profiles")
-      .select("games_played, all_time_profit_loss, total_wins")
+      .select("games_played, all_time_profit_loss, total_wins, total_losses")
       .eq("id", row.profileId)
       .single()
 
@@ -80,9 +79,10 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     const newGamesPlayed = (currentProfile.games_played || 0) + 1
     const newProfitLoss = (currentProfile.all_time_profit_loss || 0) + profitLoss
     const newTotalWins = (currentProfile.total_wins || 0) + (isWinner ? 1 : 0)
+    const newTotalLosses = (currentProfile.total_losses || 0) + (isLoser ? 1 : 0)
 
     console.log(
-      `[v0] Updating ${row.name}: games_played ${currentProfile.games_played || 0} -> ${newGamesPlayed}, all_time_profit_loss ${currentProfile.all_time_profit_loss || 0} -> ${newProfitLoss}, total_wins ${currentProfile.total_wins || 0} -> ${newTotalWins}`,
+      `[v0] Updating ${row.name}: games_played ${currentProfile.games_played || 0} -> ${newGamesPlayed}, all_time_profit_loss ${currentProfile.all_time_profit_loss || 0} -> ${newProfitLoss}, total_wins ${currentProfile.total_wins || 0} -> ${newTotalWins}, total_losses ${currentProfile.total_losses || 0} -> ${newTotalLosses}`,
     )
 
     // Update with explicit values
@@ -92,6 +92,7 @@ export async function finalizeAndUpdateStats(session: GameSession) {
         games_played: newGamesPlayed,
         all_time_profit_loss: newProfitLoss,
         total_wins: newTotalWins,
+        total_losses: newTotalLosses,
       })
       .eq("id", row.profileId)
 

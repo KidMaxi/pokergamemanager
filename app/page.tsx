@@ -431,7 +431,7 @@ export default function Home() {
         end_time: session.endTime,
         status: session.status,
         point_to_cash_rate: session.pointToCashRate,
-        players_data: session.playersInGame,
+        players_data: session.playersInGame, // This preserves all players including local ones
         game_metadata: {
           standardBuyInAmount: session.standardBuyInAmount,
         },
@@ -603,6 +603,13 @@ export default function Home() {
               setGameSessions((prevSessions) =>
                 prevSessions.map((session) => (session.id === updatedSession.id ? updatedSession : session)),
               )
+
+              // Auto-save to database when session is updated (preserves local players)
+              if (updatedSession.status === "active" || updatedSession.status === "pending_close") {
+                updateGameSessionInDatabase(updatedSession).catch((error) => {
+                  console.error("Failed to auto-save session:", error)
+                })
+              }
             }}
             onEndGame={handleEndGame}
             onAddNewPlayerGlobally={handleAddNewPlayerGlobally}

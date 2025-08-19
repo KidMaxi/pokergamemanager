@@ -551,6 +551,8 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
+        backgroundAttachment: "fixed",
+        backgroundColor: "#0a0f1a", // Fallback dark background
       }}
     >
       <div className="max-w-6xl mx-auto">
