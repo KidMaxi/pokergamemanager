@@ -4,7 +4,18 @@ import type { GameSession, PlayerInGame } from "@/types"
 
 function perPlayer(p: PlayerInGame, pointToCashRate: number) {
   const buy = roundDollars1(p.buyIns.reduce((s, b) => s + Number(b.amount), 0))
-  const cash = p.cashOutAmount > 0 ? roundDollars1(p.cashOutAmount) : roundDollars1(p.pointStack * pointToCashRate)
+
+  console.log(`[v0] Player ${p.name} raw data:`, {
+    cashOutAmount: p.cashOutAmount,
+    pointStack: p.pointStack,
+    hasCashOutAmount: p.cashOutAmount !== undefined && p.cashOutAmount !== null,
+  })
+
+  // Use cashOutAmount if it's explicitly set (including 0), otherwise calculate from points
+  const cash =
+    p.cashOutAmount !== undefined && p.cashOutAmount !== null
+      ? roundDollars1(p.cashOutAmount)
+      : roundDollars1(p.pointStack * pointToCashRate)
 
   console.log(`[v0] Player ${p.name} calculation:`, {
     pointStack: p.pointStack,
@@ -59,8 +70,12 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     const isWinner = profitLoss > 0 // Winner = positive P/L
     const isLoser = profitLoss < 0 // Loser = negative P/L
 
+    let statusText = "BREAK-EVEN"
+    if (isWinner) statusText = "WINNER"
+    if (isLoser) statusText = "LOSER"
+
     console.log(
-      `[v0] Player ${row.name}: Buy-ins = ${row.buy}, Cash-out = ${row.cash}, P/L = ${profitLoss}, isWinner = ${isWinner}, isLoser = ${isLoser}`,
+      `[v0] Player ${row.name}: Buy-ins = ${row.buy}, Cash-out = ${row.cash}, P/L = ${profitLoss}, Status = ${statusText}`,
     )
 
     // Fetch current profile data to get current values
@@ -82,7 +97,12 @@ export async function finalizeAndUpdateStats(session: GameSession) {
     const newTotalLosses = (currentProfile.total_losses || 0) + (isLoser ? 1 : 0)
 
     console.log(
-      `[v0] Updating ${row.name}: games_played ${currentProfile.games_played || 0} -> ${newGamesPlayed}, all_time_profit_loss ${currentProfile.all_time_profit_loss || 0} -> ${newProfitLoss}, total_wins ${currentProfile.total_wins || 0} -> ${newTotalWins}, total_losses ${currentProfile.total_losses || 0} -> ${newTotalLosses}`,
+      `[v0] Updating ${row.name}:`,
+      `\n  games_played: ${currentProfile.games_played || 0} -> ${newGamesPlayed}`,
+      `\n  all_time_profit_loss: ${currentProfile.all_time_profit_loss || 0} -> ${newProfitLoss}`,
+      `\n  total_wins: ${currentProfile.total_wins || 0} -> ${newTotalWins}`,
+      `\n  total_losses: ${currentProfile.total_losses || 0} -> ${newTotalLosses}`,
+      `\n  Status: ${statusText}`,
     )
 
     // Update with explicit values
@@ -101,7 +121,9 @@ export async function finalizeAndUpdateStats(session: GameSession) {
       throw updateError
     }
 
-    console.log(`[v0] ✅ Successfully updated profile for ${row.name}`)
+    console.log(
+      `[v0] ✅ Successfully updated profile for ${row.name} - Final stats: W:${newTotalWins} L:${newTotalLosses} P/L:${newProfitLoss}`,
+    )
 
     // Store the result in game_player_results table for summary display
     const { error: resultError } = await supabase.from("game_player_results").upsert({
