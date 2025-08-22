@@ -323,24 +323,21 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
       })
 
       const finalSession: GameSession = {
-        ...localSession, // Use localSession to preserve cashout data
+        ...localSession,
         playersInGame: updatedPlayersInGame,
-        status: "completed" as const,
+        status: "completed",
         endTime: new Date().toISOString(),
-        currentPhysicalPointsOnTable: 0,
-        dbId: localSession.dbId || localSession.id, // Use localSession.dbId
       }
 
-      console.log("🏁 Finalizing game with stats tracking", {
-        gameId: finalSession.id,
-        dbId: finalSession.dbId,
-        playersWithProfileIds: finalSession.playersInGame.filter((p) => p.profileId).length,
-      })
-
       await onEndGame(finalSession)
+
+      // Navigate to the new summary page
+      if (typeof window !== "undefined" && finalSession.dbId) {
+        window.location.href = `/games/${finalSession.dbId}/summary`
+      }
     } catch (error) {
-      console.error("Error finalizing game:", error)
-      setError("Failed to finalize game. Please try again.")
+      console.error("Error ending game:", error)
+      setError("Failed to end game. Please try again.")
     } finally {
       setIsLoading(false)
     }
@@ -585,9 +582,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             return (
               <div
                 key={player.id}
-                className={`bg-slate-800/60 backdrop-blur-sm rounded-lg p-4 md:p-6 border border-slate-700/50 ${
-                  player.hasCashedOut ? "opacity-60 blur-[2px]" : ""
-                }`}
+                className={`bg-slate-800/60 backdrop-blur-sm rounded-lg p-4 md:p-6 border border-slate-700/50`}
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -993,14 +988,24 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
               {cashedOutPlayers.length > 0 && (
                 <div className="bg-gray-700 p-4 rounded-lg mb-4">
-                  <h3 className="text-lg font-semibold text-gray-300 mb-2">
+                  <h3 className="text-lg font-semibold text-gray-300 mb-2 flex items-center gap-2">
                     Already Cashed Out ({cashedOutPlayers.length})
+                    <span className="text-xs bg-red-600 px-2 py-1 rounded">CASHED OUT</span>
                   </h3>
                   <div className="space-y-2">
                     {cashedOutPlayers.map((player) => (
-                      <div key={player.playerId} className="flex justify-between items-center text-sm">
-                        <span className="text-gray-400">{player.name}</span>
-                        <span className="text-gray-400">${(player.cashOutAmount || 0).toFixed(2)}</span>
+                      <div
+                        key={player.playerId}
+                        className="flex justify-between items-center text-sm bg-gray-600 p-2 rounded"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                            {getInitials(player.name)}
+                          </div>
+                          <span className="text-white font-medium">{player.name}</span>
+                          <span className="text-xs bg-red-600 px-2 py-1 rounded">CASHED OUT</span>
+                        </div>
+                        <span className="text-green-400 font-bold">${(player.cashOutAmount || 0).toFixed(2)}</span>
                       </div>
                     ))}
                   </div>

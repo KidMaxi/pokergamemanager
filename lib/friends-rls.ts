@@ -3,7 +3,7 @@ import { supabaseServer } from "./supabase-server"
 
 // RLS-friendly friend list fetching
 export async function getFriends(useServerClient = false) {
-  const supabase = useServerClient ? supabaseServer() : supabaseBrowser
+  const supabase = useServerClient ? await supabaseServer() : supabaseBrowser
 
   // Get current user
   const {
@@ -52,7 +52,7 @@ export async function getFriends(useServerClient = false) {
 
 // RLS-friendly friend requests fetching
 export async function getFriendRequests(type: "sent" | "received", useServerClient = false) {
-  const supabase = useServerClient ? supabaseServer() : supabaseBrowser
+  const supabase = useServerClient ? await supabaseServer() : supabaseBrowser
 
   const {
     data: { user },
