@@ -194,6 +194,20 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
     fetchPendingInvitations()
   }, [user])
 
+  useEffect(() => {
+    console.log("[v0] GameDashboard received gameSessions:", gameSessions.length)
+    console.log(
+      "[v0] GameDashboard gameSessions details:",
+      gameSessions.map((g) => ({
+        id: g.id,
+        name: g.name,
+        status: g.status,
+        isOwner: g.isOwner,
+        invitedUsers: g.invitedUsers?.length || 0,
+      })),
+    )
+  }, [gameSessions])
+
   const handleInvitationHandled = () => {
     // Refresh invitations after handling one
     fetchPendingInvitations()

@@ -779,13 +779,12 @@ export default function ActiveGameScreen({
         return
       }
 
-      // Check existing friendships
       const playerIds = playerProfiles.map((p) => p.id)
       const { data: friendships, error: friendshipsError } = await supabase
         .from("friendships")
-        .select("friend_id")
-        .eq("user_id", user.id)
-        .in("friend_id", playerIds)
+        .select("user_id, friend_id")
+        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+        .or(`user_id.in.(${playerIds.join(",")}),friend_id.in.(${playerIds.join(",")})`)
 
       if (friendshipsError) {
         console.error("Error loading friendships:", friendshipsError)
@@ -811,7 +810,11 @@ export default function ActiveGameScreen({
       const playersWithProfiles = new Set(playerProfiles.map((p) => p.full_name || ""))
 
       for (const profile of playerProfiles) {
-        const isFriend = friendships?.some((f) => f.friend_id === profile.id)
+        const isFriend = friendships?.some(
+          (f) =>
+            (f.user_id === user.id && f.friend_id === profile.id) ||
+            (f.friend_id === user.id && f.user_id === profile.id),
+        )
         const hasPendingRequest = pendingRequests?.some(
           (r) =>
             (r.sender_id === user.id && r.receiver_id === profile.id) ||
