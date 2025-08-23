@@ -96,10 +96,6 @@ const PlayerManagement: React.FC<PlayerManagementProps> = ({
       setAddPlayerError("Player name cannot be empty.")
       return
     }
-    if (players.length >= 999) {
-      setAddPlayerError("Maximum player roster limit reached.")
-      return
-    }
     if (players.find((p) => p.name.toLowerCase() === newPlayerName.trim().toLowerCase())) {
       setAddPlayerError("A player with this name already exists.")
       return
@@ -168,7 +164,6 @@ const PlayerManagement: React.FC<PlayerManagementProps> = ({
             placeholder="e.g., Jane Doe"
             error={addPlayerError}
           />
-          <p className="text-xs text-gray-500">Total players in roster: {players.length}</p>
           <Button type="submit" variant="primary">
             Add Player
           </Button>

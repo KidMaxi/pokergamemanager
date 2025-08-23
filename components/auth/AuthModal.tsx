@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState } from "react"
-import { useSupabase } from "../../contexts/SupabaseProvider"
+import { useAuth } from "../../contexts/AuthContext"
 import Modal from "../common/Modal"
 import Input from "../common/Input"
 import Button from "../common/Button"
@@ -23,7 +23,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "signin" }: A
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
-  const { supabase } = useSupabase()
+  const { signIn, signUp } = useAuth()
 
   const resetForm = () => {
     setEmail("")
@@ -53,15 +53,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "signin" }: A
           return
         }
 
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              full_name: fullName.trim(),
-            },
-          },
-        })
+        const { error } = await signUp(email, password, fullName.trim())
 
         if (error) {
           setError(error.message)
@@ -71,10 +63,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "signin" }: A
           resetForm()
         }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
+        const { error } = await signIn(email, password)
 
         if (error) {
           setError(error.message)

@@ -2,13 +2,12 @@
 
 import type React from "react"
 import { useState } from "react"
-import { useSupabase } from "../../contexts/SupabaseProvider"
+import { useAuth } from "../../contexts/AuthContext"
 import Button from "../common/Button"
 import Card from "../common/Card"
 
 const EmailVerificationScreen: React.FC = () => {
-  const { session, supabase } = useSupabase()
-  const user = session?.user
+  const { user, signOut, resendVerification } = useAuth()
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
@@ -19,10 +18,7 @@ const EmailVerificationScreen: React.FC = () => {
     setMessage("")
 
     try {
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: user?.email || "",
-      })
+      const { error } = await resendVerification()
 
       if (error) {
         setError(error.message)
@@ -38,12 +34,13 @@ const EmailVerificationScreen: React.FC = () => {
 
   const handleSignOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut()
+      const { error } = await signOut()
 
       if (error) {
         console.error("Sign out error:", error)
         setError("Error signing out. Please try again.")
       } else {
+        // Force a page reload to ensure clean state
         window.location.reload()
       }
     } catch (err) {

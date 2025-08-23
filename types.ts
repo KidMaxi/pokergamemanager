@@ -1,7 +1,6 @@
 export interface Player {
   id: string
   name: string
-  profileId?: string // link to profiles.id for stats tracking
 }
 
 export interface BuyInRecord {
@@ -28,7 +27,6 @@ export interface PlayerInGame {
   cashOutLog: CashOutLogRecord[]
   status: "active" | "cashed_out_early"
   pointsLeftOnTable?: number // Points left on table when cashing out early
-  profileId?: string // link to profiles.id for stats tracking
 }
 
 export interface GameSession {
@@ -43,10 +41,9 @@ export interface GameSession {
   currentPhysicalPointsOnTable: number
   invitedUsers?: string[]
   isOwner?: boolean // Track if the current user owns this game
-  dbId?: string // database UUID for persistence and stats tracking
 }
 
-export type View = "dashboard" | "activeGame" | "friends" | "stats"
+export type View = "dashboard" | "activeGame" | "friends"
 
 export interface GameResult {
   gameId: string
@@ -111,21 +108,4 @@ export interface GameInvitation {
     full_name: string | null
     email: string
   }
-}
-
-export interface PlayerManagementProps {
-  players: Player[]
-  gameSessions: GameSession[]
-  onAddPlayer: (player: Player) => void
-  onEditPlayer: (playerId: string, newName: string) => void
-  onDeletePlayer: (playerId: string) => string | null
-}
-
-export interface ActiveGameScreenProps {
-  session: GameSession
-  players: Player[]
-  onUpdateSession: (session: GameSession) => void
-  onEndGame: (session: GameSession) => void
-  onNavigateToDashboard: () => void
-  onAddNewPlayerGlobally: (name: string) => Promise<Player | null>
 }

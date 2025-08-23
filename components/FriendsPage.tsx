@@ -2,761 +2,581 @@
 
 import type React from "react"
 import { useState, useEffect, useCallback } from "react"
-import { useSupabase } from "../contexts/SupabaseProvider"
-import Button from "./common/Button"
+import { useAuth } from "../contexts/AuthContext"
+import { supabase } from "../lib/supabase"
+import type { FriendRequest, Friendship } from "../types"
+import { formatCurrency, formatDate } from "../utils"
 import Card from "./common/Card"
+import Button from "./common/Button"
 import Input from "./common/Input"
 import Modal from "./common/Modal"
 
-interface Friend {
-  id: string
-  user_id: string
-  friend_id: string
-  friend_profile: {
-    id: string
-    full_name: string
-    email: string
-    all_time_profit_loss: number | null
-    games_played: number | null
-    total_wins: number | null
-  }
-  created_at: string
-}
-
-interface FriendRequest {
-  id: string
-  sender_id: string
-  receiver_id: string
-  status: "pending" | "accepted" | "rejected"
-  sender_profile?: {
-    id: string
-    full_name: string
-    email: string
-  }
-  receiver_profile?: {
-    id: string
-    full_name: string
-    email: string
-  }
-  created_at: string
-}
-
-interface UserProfile {
-  id: string
-  full_name: string
-  email: string
-}
-
-type TabType = "friends" | "sent" | "received"
-
 const FriendsPage: React.FC = () => {
-  const { session, supabase } = useSupabase()
-  const user = session?.user
-  const [friends, setFriends] = useState<Friend[]>([])
-  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([])
+  const { user } = useAuth()
+  const [activeTab, setActiveTab] = useState<"friends" | "sent" | "received">("friends")
+  const [friends, setFriends] = useState<Friendship[]>([])
   const [sentRequests, setSentRequests] = useState<FriendRequest[]>([])
+  const [receivedRequests, setReceivedRequests] = useState<FriendRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddFriendModal, setShowAddFriendModal] = useState(false)
-  const [searchEmail, setSearchEmail] = useState("")
-  const [searchResults, setSearchResults] = useState<UserProfile[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
-  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({})
+  const [friendEmail, setFriendEmail] = useState("")
+  const [addFriendLoading, setAddFriendLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
-  const [activeTab, setActiveTab] = useState<TabType>("friends")
 
-  const fetchFriends = useCallback(async () => {
-    if (!user) return
+  const loadFriendsData = useCallback(async () => {
+    if (!user) {
+      console.log("[v0] No user found, skipping friends data load")
+      setLoading(false)
+      return
+    }
 
     try {
       setLoading(true)
       setError("")
+      console.log("[v0] Loading friends data for user:", user.id)
 
-      // Try using database functions first
-      const { data: functionData, error: functionError } = await supabase.rpc("get_user_friends", {
-        user_id: user.id,
-      })
+      // Initialize arrays
+      let friendsWithProfiles: Friendship[] = []
+      let sentWithProfiles: FriendRequest[] = []
+      let receivedWithProfiles: FriendRequest[] = []
 
-      if (!functionError && functionData) {
-        setFriends(functionData)
-        setLoading(false)
-        return
+      try {
+        console.log("[v0] Fetching friendships...")
+        const { data: friendsData, error: friendsError } = await supabase
+          .from("friendships")
+          .select("*")
+          .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+
+        console.log("[v0] Friendships query result:", { friendsData, friendsError })
+
+        if (friendsError) {
+          console.error("[v0] Error loading friends:", friendsError)
+          // Don't throw here, just log and continue
+        } else if (friendsData && friendsData.length > 0) {
+          console.log("[v0] Found", friendsData.length, "friendships")
+          const friendIds = friendsData.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id))
+          console.log("[v0] Fetching profiles for friend IDs:", friendIds)
+
+          const { data: profilesData, error: profilesError } = await supabase
+            .from("profiles")
+            .select("id, full_name, email, all_time_profit_loss, games_played")
+            .in("id", friendIds)
+
+          console.log("[v0] Profiles query result:", { profilesData, profilesError })
+
+          if (!profilesError && profilesData) {
+            friendsWithProfiles = friendsData.map((friendship) => {
+              const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
+              return {
+                ...friendship,
+                friend_id: friendId, // Normalize the friend_id
+                friend_profile: profilesData.find((p) => p.id === friendId),
+              }
+            })
+            console.log("[v0] Mapped friends with profiles:", friendsWithProfiles)
+          }
+        } else {
+          console.log("[v0] No friendships found for user")
+        }
+      } catch (err) {
+        console.error("[v0] Error in friends loading:", err)
       }
 
-      // Fallback to direct query with bidirectional support
-      const { data: friendshipsData, error: friendshipsError } = await supabase
-        .from("friendships")
-        .select(`
-          id,
-          user_id,
-          friend_id,
-          created_at,
-          user_profile:profiles!friendships_user_id_fkey (
-            id,
-            full_name,
-            email,
-            all_time_profit_loss,
-            games_played,
-            total_wins
-          ),
-          friend_profile:profiles!friendships_friend_id_fkey (
-            id,
-            full_name,
-            email,
-            all_time_profit_loss,
-            games_played,
-            total_wins
-          )
-        `)
-        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+      try {
+        // Load sent requests (only pending ones)
+        console.log("[v0] Fetching sent requests...")
+        const { data: sentData, error: sentError } = await supabase
+          .from("friend_requests")
+          .select("*")
+          .eq("sender_id", user.id)
+          .eq("status", "pending")
 
-      if (friendshipsError) {
-        console.error("Error fetching friends:", friendshipsError)
-        setError("Failed to load friends. Please try refreshing the page.")
-        setLoading(false)
-        return
+        console.log("[v0] Sent requests query result:", { sentData, sentError })
+
+        if (!sentError && sentData && sentData.length > 0) {
+          console.log("[v0] Found", sentData.length, "sent requests")
+          // Get receiver profiles for sent requests
+          const receiverIds = sentData.map((r) => r.receiver_id)
+
+          const { data: receiverProfiles, error: receiverError } = await supabase
+            .from("profiles")
+            .select("id, full_name, email")
+            .in("id", receiverIds)
+
+          if (!receiverError && receiverProfiles) {
+            sentWithProfiles = sentData.map((request) => ({
+              ...request,
+              receiver_profile: receiverProfiles.find((p) => p.id === request.receiver_id),
+            }))
+            console.log("[v0] Mapped sent requests with profiles:", sentWithProfiles)
+          }
+        } else {
+          console.log("[v0] No sent requests found")
+        }
+      } catch (err) {
+        console.error("[v0] Error in sent requests loading:", err)
       }
 
-      const transformedFriends =
-        friendshipsData
-          ?.map((friendship: any) => {
-            // Determine which profile to show based on current user's position
-            const friendProfile = friendship.user_id === user.id ? friendship.friend_profile : friendship.user_profile
-            const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
+      try {
+        // Load received requests (only pending ones)
+        console.log("[v0] Fetching received requests...")
+        const { data: receivedData, error: receivedError } = await supabase
+          .from("friend_requests")
+          .select("*")
+          .eq("receiver_id", user.id)
+          .eq("status", "pending")
 
-            // Filter out self-friendships and null profiles
-            if (!friendProfile || friendProfile.id === user.id || !friendId) {
-              console.warn("Skipping invalid friendship:", friendship)
-              return null
-            }
+        console.log("[v0] Received requests query result:", { receivedData, receivedError })
 
-            return {
-              id: friendship.id,
-              user_id: friendship.user_id,
-              friend_id: friendId,
-              friend_profile: {
-                ...friendProfile,
-                // Ensure numeric values are properly handled
-                all_time_profit_loss: friendProfile.all_time_profit_loss || 0,
-                games_played: friendProfile.games_played || 0,
-                total_wins: friendProfile.total_wins || 0,
-              },
-              created_at: friendship.created_at,
-            }
-          })
-          .filter(Boolean) || []
+        if (!receivedError && receivedData && receivedData.length > 0) {
+          console.log("[v0] Found", receivedData.length, "received requests")
+          // Get sender profiles for received requests
+          const senderIds = receivedData.map((r) => r.sender_id)
 
-      // Deduplicate friends based on friend_id
-      const uniqueFriends = Array.from(new Map(transformedFriends.map((friend) => [friend.friend_id, friend])).values())
+          const { data: senderProfiles, error: senderError } = await supabase
+            .from("profiles")
+            .select("id, full_name, email")
+            .in("id", senderIds)
 
-      console.log(`✅ Loaded ${uniqueFriends.length} friends`)
-      setFriends(uniqueFriends)
+          if (!senderError && senderProfiles) {
+            receivedWithProfiles = receivedData.map((request) => ({
+              ...request,
+              sender_profile: senderProfiles.find((p) => p.id === request.sender_id),
+            }))
+            console.log("[v0] Mapped received requests with profiles:", receivedWithProfiles)
+          }
+        } else {
+          console.log("[v0] No received requests found")
+        }
+      } catch (err) {
+        console.error("[v0] Error in received requests loading:", err)
+      }
+
+      // Update state with loaded data
+      console.log(
+        "[v0] Final data counts - Friends:",
+        friendsWithProfiles.length,
+        "Sent:",
+        sentWithProfiles.length,
+        "Received:",
+        receivedWithProfiles.length,
+      )
+      setFriends(friendsWithProfiles)
+      setSentRequests(sentWithProfiles)
+      setReceivedRequests(receivedWithProfiles)
+
+      console.log("[v0] Friends data loaded successfully")
     } catch (error) {
-      console.error("Error loading friends:", error)
-      setError("Failed to load friends. Please check your connection and try again.")
+      console.error("[v0] Error in loadFriendsData:", error)
+      setError("Failed to load friends data. Please try refreshing the page.")
     } finally {
       setLoading(false)
     }
   }, [user])
 
-  const loadFriendRequestsData = useCallback(async () => {
-    if (!user) return
-
-    try {
-      // Load friend requests (received)
-      const { data: requestsData, error: requestsError } = await supabase
-        .from("friend_requests")
-        .select(`
-          id,
-          sender_id,
-          receiver_id,
-          status,
-          created_at,
-          sender_profile:profiles!friend_requests_sender_id_fkey (
-            id,
-            full_name,
-            email
-          )
-        `)
-        .eq("receiver_id", user.id)
-        .eq("status", "pending")
-
-      if (requestsError) {
-        console.error("❌ Error loading friend requests:", requestsError)
-        throw requestsError
-      }
-
-      setFriendRequests(requestsData || [])
-      console.log("✅ Loaded friend requests:", (requestsData || []).length)
-
-      // Load sent requests
-      const { data: sentData, error: sentError } = await supabase
-        .from("friend_requests")
-        .select(`
-          id,
-          sender_id,
-          receiver_id,
-          status,
-          created_at,
-          receiver_profile:profiles!friend_requests_receiver_id_fkey (
-            id,
-            full_name,
-            email
-          )
-        `)
-        .eq("sender_id", user.id)
-        .eq("status", "pending")
-
-      if (sentError) {
-        console.error("❌ Error loading sent requests:", sentError)
-        throw sentError
-      }
-
-      setSentRequests(sentData || [])
-      console.log("✅ Loaded sent requests:", (sentData || []).length)
-    } catch (error) {
-      console.error("❌ Error in loadFriendRequestsData:", error)
-      setError("Failed to load friend requests data. Please try again.")
-    }
-  }, [user])
-
-  const refreshFriendsData = async () => {
-    setLoading(true)
-    await Promise.all([fetchFriends(), loadFriendRequestsData()])
-  }
-
   useEffect(() => {
-    fetchFriends()
-    loadFriendRequestsData()
-  }, [fetchFriends, loadFriendRequestsData])
+    let mounted = true
 
-  const getInitials = (fullName: string, email: string): string => {
-    if (fullName && fullName.trim()) {
-      const names = fullName.trim().split(" ")
-      if (names.length >= 2) {
-        return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
+    const loadData = async () => {
+      if (user && mounted) {
+        await loadFriendsData()
       }
-      return names[0][0].toUpperCase()
     }
-    if (email) {
-      return email[0].toUpperCase()
+
+    loadData()
+
+    return () => {
+      mounted = false
     }
-    return "?"
-  }
+  }, [user, loadFriendsData])
 
-  const searchUsers = async () => {
-    if (!searchEmail.trim()) return
+  const handleSendFriendRequest = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!user || !friendEmail.trim()) return
 
-    setSearchLoading(true)
+    setAddFriendLoading(true)
     setError("")
+    setSuccess("")
+
     try {
-      const { data, error } = await supabase
+      // First, find the user by email
+      const { data: targetUser, error: userError } = await supabase
         .from("profiles")
-        .select("id, full_name, email")
-        .or(`email.ilike.%${searchEmail}%,full_name.ilike.%${searchEmail}%`)
-        .neq("id", user?.id)
-        .limit(10)
+        .select("id, email, full_name")
+        .eq("email", friendEmail.trim().toLowerCase())
+        .single()
 
-      if (error) throw error
+      if (userError || !targetUser) {
+        setError("User not found with that email address")
+        return
+      }
 
-      // Filter out users who are already friends or have pending requests
-      const existingFriendIds = new Set(friends.map((f) => f.friend_id))
-      const pendingRequestIds = new Set([
-        ...friendRequests.map((r) => r.sender_id),
-        ...sentRequests.map((r) => r.receiver_id),
-      ])
+      if (targetUser.id === user.id) {
+        setError("You cannot send a friend request to yourself")
+        return
+      }
 
-      const filteredResults = (data || []).filter(
-        (user) => !existingFriendIds.has(user.id) && !pendingRequestIds.has(user.id),
-      )
+      // Check if already friends
+      const { data: existingFriendship } = await supabase
+        .from("friendships")
+        .select("id")
+        .or(
+          `and(user_id.eq.${user.id},friend_id.eq.${targetUser.id}),and(user_id.eq.${targetUser.id},friend_id.eq.${user.id})`,
+        )
+        .single()
 
-      setSearchResults(filteredResults)
-    } catch (error) {
-      console.error("Error searching users:", error)
-      setError("Failed to search users. Please try again.")
-    } finally {
-      setSearchLoading(false)
-    }
-  }
+      if (existingFriendship) {
+        setError("You are already friends with this user")
+        return
+      }
 
-  const sendFriendRequest = async (receiverId: string) => {
-    if (!user) return
+      // Check if request already exists (only pending ones exist now)
+      const { data: existingRequest } = await supabase
+        .from("friend_requests")
+        .select("id, status")
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.eq.${targetUser.id}),and(sender_id.eq.${targetUser.id},receiver_id.eq.${user.id})`,
+        )
+        .single()
 
-    setActionLoading((prev) => ({ ...prev, [receiverId]: true }))
-    setError("")
-    try {
-      const { error } = await supabase.from("friend_requests").insert({
+      if (existingRequest) {
+        setError("A friend request is already pending with this user")
+        return
+      }
+
+      // Send friend request
+      const { error: requestError } = await supabase.from("friend_requests").insert({
         sender_id: user.id,
-        receiver_id: receiverId,
+        receiver_id: targetUser.id,
         status: "pending",
       })
 
-      if (error) throw error
+      if (requestError) {
+        throw requestError
+      }
 
-      setSuccess("Friend request sent successfully!")
-      setSearchResults((prev) => prev.filter((u) => u.id !== receiverId))
-
-      // Refresh data to update sent requests
-      await loadFriendRequestsData()
-    } catch (error) {
+      setSuccess(`Friend request sent to ${targetUser.full_name || targetUser.email}!`)
+      setFriendEmail("")
+      setShowAddFriendModal(false)
+      loadFriendsData() // Refresh data
+    } catch (error: any) {
       console.error("Error sending friend request:", error)
-      setError("Failed to send friend request. Please try again.")
+      setError("Failed to send friend request")
     } finally {
-      setActionLoading((prev) => ({ ...prev, [receiverId]: false }))
+      setAddFriendLoading(false)
     }
   }
 
-  const acceptFriendRequest = async (requestId: string, senderId: string) => {
-    if (!user) return
-
-    setActionLoading((prev) => ({ ...prev, [requestId]: true }))
-    setError("")
+  const handleAcceptRequest = async (requestId: string) => {
     try {
-      // Update request status
-      const { error: updateError } = await supabase
-        .from("friend_requests")
-        .update({ status: "accepted" })
-        .eq("id", requestId)
+      setError("")
+      const { error } = await supabase.rpc("accept_friend_request", {
+        request_id: requestId,
+      })
 
-      if (updateError) throw updateError
-
-      // Create bidirectional friendship
-      const { error: friendshipError } = await supabase.from("friendships").insert([
-        { user_id: user.id, friend_id: senderId },
-        { user_id: senderId, friend_id: user.id },
-      ])
-
-      if (friendshipError) throw friendshipError
+      if (error) {
+        throw error
+      }
 
       setSuccess("Friend request accepted!")
-
-      // Refresh data
-      await fetchFriends()
-      await loadFriendRequestsData()
-    } catch (error) {
-      console.error("Error accepting friend request:", error)
-      setError("Failed to accept friend request. Please try again.")
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [requestId]: false }))
+      loadFriendsData() // Refresh data
+    } catch (error: any) {
+      console.error("Error accepting request:", error)
+      setError("Failed to accept friend request")
     }
   }
 
-  const rejectFriendRequest = async (requestId: string) => {
-    setActionLoading((prev) => ({ ...prev, [requestId]: true }))
-    setError("")
+  const handleDeclineRequest = async (requestId: string) => {
     try {
-      const { error } = await supabase.from("friend_requests").update({ status: "rejected" }).eq("id", requestId)
-
-      if (error) throw error
-
-      setSuccess("Friend request rejected.")
-
-      // Refresh data
-      await loadFriendRequestsData()
-    } catch (error) {
-      console.error("Error rejecting friend request:", error)
-      setError("Failed to reject friend request. Please try again.")
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [requestId]: false }))
-    }
-  }
-
-  const removeFriend = async (friendId: string) => {
-    if (!user) return
-
-    setError("")
-    try {
-      // Remove both directions of the friendship
+      setError("")
       const { error } = await supabase
-        .from("friendships")
-        .delete()
-        .or(`and(user_id.eq.${user.id},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${user.id})`)
+        .from("friend_requests")
+        .update({ status: "declined", updated_at: new Date().toISOString() })
+        .eq("id", requestId)
 
-      if (error) throw error
+      if (error) {
+        throw error
+      }
 
-      setSuccess("Friend removed successfully.")
-
-      // Refresh data
-      await fetchFriends()
-    } catch (error) {
-      console.error("Error removing friend:", error)
-      setError("Failed to remove friend. Please try again.")
+      setSuccess("Friend request declined")
+      loadFriendsData() // Refresh data
+    } catch (error: any) {
+      console.error("Error declining request:", error)
+      setError("Failed to decline friend request")
     }
+  }
+
+  const handleRemoveFriend = async (friendId: string) => {
+    if (!confirm("Are you sure you want to remove this friend?")) return
+
+    try {
+      setError("")
+      const { error } = await supabase.rpc("remove_friendship", {
+        friend_user_id: friendId,
+      })
+
+      if (error) {
+        throw error
+      }
+
+      setSuccess("Friend removed")
+      loadFriendsData() // Refresh data
+    } catch (error: any) {
+      console.error("Error removing friend:", error)
+      setError("Failed to remove friend")
+    }
+  }
+
+  const handleCancelRequest = async (requestId: string) => {
+    try {
+      setError("")
+      const { error } = await supabase.from("friend_requests").delete().eq("id", requestId)
+
+      if (error) {
+        throw error
+      }
+
+      setSuccess("Friend request cancelled")
+      loadFriendsData() // Refresh data
+    } catch (error: any) {
+      console.error("Error cancelling request:", error)
+      setError("Failed to cancel friend request")
+    }
+  }
+
+  const handleRetry = () => {
+    setError("")
+    loadFriendsData()
   }
 
   if (loading) {
     return (
-      <div
-        className="min-h-screen bg-gradient-to-br from-slate-900 via-green-900 to-slate-900 bg-cover bg-center bg-no-repeat flex items-center justify-center"
-        style={{ backgroundImage: "url('/images/poker-chips-background.jpg')" }}
-      >
+      <div className="container mx-auto px-4 py-8">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mb-4"></div>
-          <p className="text-white text-center">Loading friends...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
+          <p className="text-text-secondary">Loading friends...</p>
         </div>
       </div>
     )
   }
 
-  const renderFriendsTab = () => (
-    <Card>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-semibold text-white">My Friends ({friends.length})</h2>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refreshFriendsData}
-            disabled={loading}
-            className="border-green-600 text-green-400 hover:bg-green-600/20 bg-transparent"
-          >
-            {loading ? "Loading..." : "Refresh"}
-          </Button>
-          <Button
-            onClick={() => {
-              setShowAddFriendModal(true)
-              setSearchEmail("")
-              setSearchResults([])
-              setError("")
-            }}
-            className="bg-green-600 hover:bg-green-700 text-white"
-          >
-            Add Friend
-          </Button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="mb-4 p-3 bg-red-900/50 border border-red-600 rounded-lg">
-          <p className="text-red-400 text-sm">{error}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refreshFriendsData}
-            className="mt-2 border-red-600 text-red-400 hover:bg-red-600/20 bg-transparent"
-          >
-            Try Again
-          </Button>
-        </div>
-      )}
-
-      {friends.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"
-              />
-            </svg>
-          </div>
-          <p className="text-gray-400 mb-4 text-lg">You haven't added any friends yet.</p>
-          <p className="text-gray-500 mb-6">Connect with other players to start building your poker network!</p>
-          <Button onClick={() => setShowAddFriendModal(true)} variant="primary">
-            Add Your First Friend
-          </Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {friends.map((friend) => {
-            const gamesPlayed = friend.friend_profile.games_played || 0
-            const totalWins = friend.friend_profile.total_wins || 0
-            const profitLoss = friend.friend_profile.all_time_profit_loss || 0
-            const winRate = gamesPlayed > 0 ? ((totalWins / gamesPlayed) * 100).toFixed(1) : "0.0"
-
-            return (
-              <div
-                key={friend.id}
-                className="bg-slate-700/50 backdrop-blur-sm p-4 rounded-lg border border-slate-600 hover:border-green-500/50 transition-colors"
-              >
-                <div className="flex flex-col space-y-3">
-                  <div className="flex items-start space-x-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0">
-                      {getInitials(friend.friend_profile.full_name, friend.friend_profile.email)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-white font-medium truncate">{friend.friend_profile.full_name}</p>
-                      <p className="text-gray-400 text-sm truncate">{friend.friend_profile.email}</p>
-                      <p className="text-gray-500 text-xs">
-                        Friends since {new Date(friend.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => removeFriend(friend.friend_id)}
-                      className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors flex-shrink-0"
-                    >
-                      Remove
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-slate-800/50 rounded px-3 py-2">
-                      <p className="text-xs text-gray-400 mb-1">P/L</p>
-                      <p className={`text-sm font-medium ${profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                        {profitLoss >= 0 ? "+" : ""}${profitLoss.toFixed(2)}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/50 rounded px-3 py-2">
-                      <p className="text-xs text-gray-400 mb-1">Games</p>
-                      <p className="text-sm font-medium text-white">{gamesPlayed}</p>
-                    </div>
-                    <div className="bg-slate-800/50 rounded px-3 py-2">
-                      <p className="text-xs text-gray-400 mb-1">Wins</p>
-                      <p className="text-sm font-medium text-blue-400">{totalWins}</p>
-                    </div>
-                    <div className="bg-slate-800/50 rounded px-3 py-2">
-                      <p className="text-xs text-gray-400 mb-1">Win Rate</p>
-                      <p className="text-sm font-medium text-purple-400">{winRate}%</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </Card>
-  )
-
-  const renderSentRequestsTab = () => (
-    <Card>
-      <h2 className="text-xl font-semibold text-white mb-6">Sent Requests ({sentRequests.length})</h2>
-
-      {sentRequests.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-            </svg>
-          </div>
-          <p className="text-gray-400 mb-4 text-lg">No pending friend requests sent.</p>
-          <p className="text-gray-500">Friend requests you send will appear here while they're pending.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {sentRequests.map((request) => (
-            <div
-              key={request.id}
-              className="flex items-center justify-between bg-slate-700/50 backdrop-blur-sm p-4 rounded-lg border border-slate-600"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-full flex items-center justify-center text-white font-bold">
-                  {getInitials(request.receiver_profile?.full_name || "", request.receiver_profile?.email || "")}
-                </div>
-                <div>
-                  <p className="text-white font-medium">{request.receiver_profile?.full_name || "Unknown User"}</p>
-                  <p className="text-gray-400 text-sm">{request.receiver_profile?.email}</p>
-                  <p className="text-gray-500 text-xs">Sent {new Date(request.created_at).toLocaleDateString()}</p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-                <span className="text-yellow-400 text-sm font-medium">Pending</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  )
-
-  const renderReceivedRequestsTab = () => (
-    <Card>
-      <h2 className="text-xl font-semibold text-white mb-6">Received Requests ({friendRequests.length})</h2>
-
-      {friendRequests.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 00-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-              />
-            </svg>
-          </div>
-          <p className="text-gray-400 mb-4 text-lg">No pending friend requests.</p>
-          <p className="text-gray-500">Friend requests from other players will appear here.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {friendRequests.map((request) => (
-            <div
-              key={request.id}
-              className="flex items-center justify-between bg-slate-700/50 backdrop-blur-sm p-4 rounded-lg border border-slate-600 hover:border-blue-500/50 transition-colors"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold">
-                  {getInitials(request.sender_profile?.full_name || "", request.sender_profile?.email || "")}
-                </div>
-                <div>
-                  <p className="text-white font-medium">{request.sender_profile?.full_name || "Unknown User"}</p>
-                  <p className="text-gray-400 text-sm">{request.sender_profile?.email}</p>
-                  <p className="text-gray-500 text-xs">Received {new Date(request.created_at).toLocaleDateString()}</p>
-                </div>
-              </div>
-              <div className="flex space-x-2">
-                <Button
-                  onClick={() => acceptFriendRequest(request.id, request.sender_id)}
-                  variant="primary"
-                  size="sm"
-                  disabled={actionLoading[request.id]}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  {actionLoading[request.id] ? "..." : "Accept"}
-                </Button>
-                <Button
-                  onClick={() => rejectFriendRequest(request.id)}
-                  variant="ghost"
-                  size="sm"
-                  disabled={actionLoading[request.id]}
-                  className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
-                >
-                  Reject
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  )
-
   return (
-    <div
-      className="min-h-screen bg-gradient-to-br from-slate-900 via-green-900 to-slate-900 bg-cover bg-center bg-no-repeat"
-      style={{ backgroundImage: "url('/images/poker-chips-background.jpg')" }}
-    >
-      <div className="container mx-auto p-4 max-w-4xl">
-        <div className="bg-slate-800/90 backdrop-blur-sm rounded-lg p-6 mb-6">
-          <h1 className="text-3xl font-bold text-green-400 mb-6">Friends</h1>
-
-          {error && (
-            <div className="bg-red-900/20 border border-red-600 rounded p-3 mb-4">
-              <p className="text-red-400">{error}</p>
-            </div>
-          )}
-
-          {success && (
-            <div className="bg-green-900/20 border border-green-600 rounded p-3 mb-4">
-              <p className="text-green-400">{success}</p>
-            </div>
-          )}
-
-          {/* Tabbed navigation interface */}
-          <div className="mb-6">
-            <div className="flex space-x-1 bg-slate-700/50 p-1 rounded-lg">
-              <button
-                onClick={() => setActiveTab("friends")}
-                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  activeTab === "friends"
-                    ? "bg-green-600 text-white shadow-lg"
-                    : "text-gray-300 hover:text-white hover:bg-slate-600/50"
-                }`}
-              >
-                Friends ({friends.length})
-              </button>
-              <button
-                onClick={() => setActiveTab("sent")}
-                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  activeTab === "sent"
-                    ? "bg-green-600 text-white shadow-lg"
-                    : "text-gray-300 hover:text-white hover:bg-slate-600/50"
-                }`}
-              >
-                Sent Requests ({sentRequests.length})
-              </button>
-              <button
-                onClick={() => setActiveTab("received")}
-                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors relative ${
-                  activeTab === "received"
-                    ? "bg-green-600 text-white shadow-lg"
-                    : "text-gray-300 hover:text-white hover:bg-slate-600/50"
-                }`}
-              >
-                Received Requests ({friendRequests.length})
-                {friendRequests.length > 0 && (
-                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div className="min-h-[400px]">
-            {activeTab === "friends" && renderFriendsTab()}
-            {activeTab === "sent" && renderSentRequestsTab()}
-            {activeTab === "received" && renderReceivedRequestsTab()}
-          </div>
+    <div className="container mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-text-primary">Friends</h1>
+          <Button onClick={() => setShowAddFriendModal(true)} variant="primary" className="flex items-center space-x-2">
+            <span>+</span>
+            <span>Add Friend</span>
+          </Button>
         </div>
+
+        {/* Status Messages */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-900/20 border border-red-800 rounded-lg text-red-400 text-sm flex justify-between items-center">
+            <span>{error}</span>
+            <Button onClick={handleRetry} variant="ghost" size="sm" className="text-red-400 hover:text-red-300">
+              Retry
+            </Button>
+          </div>
+        )}
+        {success && (
+          <div className="mb-4 p-3 bg-green-900/20 border border-green-800 rounded-lg text-green-400 text-sm">
+            {success}
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="flex space-x-1 mb-6 bg-surface-input rounded-lg p-1">
+          <button
+            onClick={() => setActiveTab("friends")}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === "friends" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            Friends ({friends.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("received")}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === "received" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            Requests ({receivedRequests.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("sent")}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === "sent" ? "bg-brand-primary text-white" : "text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            Sent ({sentRequests.length})
+          </button>
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === "friends" && (
+          <div className="space-y-4">
+            {friends.length === 0 ? (
+              <Card className="text-center py-8">
+                <p className="text-text-secondary mb-4">No friends yet</p>
+                <Button onClick={() => setShowAddFriendModal(true)} variant="primary">
+                  Add Your First Friend
+                </Button>
+              </Card>
+            ) : (
+              friends.map((friendship) => (
+                <Card key={friendship.id} className="p-4">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
+                    <div className="flex items-center space-x-4">
+                      <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
+                        {friendship.friend_profile?.full_name?.charAt(0) ||
+                          friendship.friend_profile?.email?.charAt(0).toUpperCase() ||
+                          "?"}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-text-primary">
+                          {friendship.friend_profile?.full_name || "Unknown User"}
+                        </h3>
+                        <p className="text-text-secondary text-sm">{friendship.friend_profile?.email}</p>
+                        <div className="flex flex-wrap gap-x-4 mt-1 text-xs text-text-secondary">
+                          <span>
+                            P/L:{" "}
+                            <span
+                              className={
+                                (friendship.friend_profile?.all_time_profit_loss || 0) >= 0
+                                  ? "text-green-400"
+                                  : "text-red-400"
+                              }
+                            >
+                              {formatCurrency(friendship.friend_profile?.all_time_profit_loss || 0)}
+                            </span>
+                          </span>
+                          <span>Games: {friendship.friend_profile?.games_played || 0}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button onClick={() => handleRemoveFriend(friendship.friend_id)} variant="danger" size="sm">
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === "received" && (
+          <div className="space-y-4">
+            {receivedRequests.length === 0 ? (
+              <Card className="text-center py-8">
+                <p className="text-text-secondary">No pending friend requests</p>
+              </Card>
+            ) : (
+              receivedRequests.map((request) => (
+                <Card key={request.id} className="p-4">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
+                    <div className="flex items-center space-x-4">
+                      <div className="w-12 h-12 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-lg">
+                        {request.sender_profile?.full_name?.charAt(0) ||
+                          request.sender_profile?.email?.charAt(0).toUpperCase() ||
+                          "?"}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-text-primary">
+                          {request.sender_profile?.full_name || "Unknown User"}
+                        </h3>
+                        <p className="text-text-secondary text-sm">{request.sender_profile?.email}</p>
+                        <p className="text-xs text-text-secondary">Sent {formatDate(request.created_at, false)}</p>
+                      </div>
+                    </div>
+                    <div className="flex space-x-2">
+                      <Button onClick={() => handleAcceptRequest(request.id)} variant="primary" size="sm">
+                        Accept
+                      </Button>
+                      <Button onClick={() => handleDeclineRequest(request.id)} variant="danger" size="sm">
+                        Decline
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === "sent" && (
+          <div className="space-y-4">
+            {sentRequests.length === 0 ? (
+              <Card className="text-center py-8">
+                <p className="text-text-secondary">No pending sent requests</p>
+              </Card>
+            ) : (
+              sentRequests.map((request) => (
+                <Card key={request.id} className="p-4">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
+                    <div className="flex items-center space-x-4">
+                      <div className="w-12 h-12 bg-gray-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                        {request.receiver_profile?.full_name?.charAt(0) ||
+                          request.receiver_profile?.email?.charAt(0).toUpperCase() ||
+                          "?"}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-text-primary">
+                          {request.receiver_profile?.full_name || "Unknown User"}
+                        </h3>
+                        <p className="text-text-secondary text-sm">{request.receiver_profile?.email}</p>
+                        <p className="text-xs text-text-secondary">Sent {formatDate(request.created_at, false)}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
+                      <span className="text-xs text-yellow-400 bg-yellow-900/20 px-2 py-1 rounded">Pending</span>
+                      <Button onClick={() => handleCancelRequest(request.id)} variant="ghost" size="sm">
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        )}
 
         {/* Add Friend Modal */}
         <Modal
           isOpen={showAddFriendModal}
           onClose={() => {
             setShowAddFriendModal(false)
-            setSearchEmail("")
-            setSearchResults([])
+            setFriendEmail("")
             setError("")
             setSuccess("")
           }}
           title="Add Friend"
         >
-          <div className="space-y-4">
-            <div className="flex space-x-2">
-              <Input
-                label="Search by email or name"
-                id="searchEmail"
-                type="text"
-                value={searchEmail}
-                onChange={(e) => setSearchEmail(e.target.value)}
-                placeholder="Enter email or name..."
-                className="flex-1"
-                onKeyPress={(e) => e.key === "Enter" && searchUsers()}
-              />
-              <Button
-                onClick={searchUsers}
-                variant="primary"
-                disabled={searchLoading || !searchEmail.trim()}
-                className="mt-6"
-              >
-                {searchLoading ? "..." : "Search"}
+          <form onSubmit={handleSendFriendRequest} className="space-y-4">
+            <Input
+              label="Friend's Email"
+              id="friendEmail"
+              type="email"
+              value={friendEmail}
+              onChange={(e) => setFriendEmail(e.target.value)}
+              placeholder="Enter their email address"
+              required
+            />
+
+            <div className="flex justify-end space-x-2">
+              <Button type="button" onClick={() => setShowAddFriendModal(false)} variant="ghost">
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" disabled={addFriendLoading || !friendEmail.trim()}>
+                {addFriendLoading ? "Sending..." : "Send Request"}
               </Button>
             </div>
-
-            {searchResults.length > 0 && (
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                <h3 className="text-white font-medium">Search Results:</h3>
-                {searchResults.map((user) => (
-                  <div key={user.id} className="flex items-center justify-between bg-slate-700 p-3 rounded">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                        {getInitials(user.full_name, user.email)}
-                      </div>
-                      <div>
-                        <p className="text-white font-medium">{user.full_name}</p>
-                        <p className="text-gray-400 text-sm">{user.email}</p>
-                      </div>
-                    </div>
-                    <Button
-                      onClick={() => sendFriendRequest(user.id)}
-                      variant="primary"
-                      size="sm"
-                      disabled={actionLoading[user.id]}
-                    >
-                      {actionLoading[user.id] ? "..." : "Add Friend"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {searchEmail && searchResults.length === 0 && !searchLoading && (
-              <p className="text-gray-400 text-center py-4">No users found matching your search.</p>
-            )}
-          </div>
+          </form>
         </Modal>
       </div>
     </div>

@@ -1,13 +1,21 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
-import { useSupabase } from "../contexts/SupabaseProvider"
+import { useState, useEffect } from "react"
+import type { View } from "../types"
+import { useAuth } from "../contexts/AuthContext"
+import { supabase } from "../lib/supabase"
 import { formatCurrency, formatDate } from "../utils"
 import Modal from "./common/Modal"
 import Input from "./common/Input"
 import Button from "./common/Button"
 import Card from "./common/Card"
+
+interface NavbarProps {
+  setCurrentView: (view: View) => void
+  activeView: View
+  user: any
+}
 
 interface UserStats {
   all_time_profit_loss: number
@@ -15,15 +23,8 @@ interface UserStats {
   last_game_date: string | null
 }
 
-interface NavbarProps {
-  currentView: string
-  onViewChange: (view: string) => void
-}
-
-const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
-  const { supabase, session, loading: authLoading } = useSupabase()
-  const user = session?.user
-
+const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => {
+  const { signOut } = useAuth()
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [fullName, setFullName] = useState("")
   const [loading, setLoading] = useState(false)
@@ -33,8 +34,17 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
 
+  useEffect(() => {
+    if (user) {
+      fetchPendingRequests()
+    } else {
+      setPendingRequestsCount(0)
+    }
+  }, [user])
+
   const handleOpenProfile = async () => {
     if (user) {
+      // Load current profile data including stats
       try {
         const { data, error } = await supabase
           .from("profiles")
@@ -51,6 +61,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
           })
         } else if (error) {
           console.error("Error loading profile:", error)
+          // Set default stats if profile doesn't exist yet
           setUserStats({
             all_time_profit_loss: 0,
             games_played: 0,
@@ -59,6 +70,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
         }
       } catch (err) {
         console.error("Error loading profile:", err)
+        // Set default stats on error
         setUserStats({
           all_time_profit_loss: 0,
           games_played: 0,
@@ -97,13 +109,14 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
 
   const handleSignOut = async () => {
     try {
-      setIsProfileModalOpen(false)
-      const { error } = await supabase.auth.signOut()
+      setIsProfileModalOpen(false) // Close modal immediately
+      const { error } = await signOut()
 
       if (error) {
         console.error("Sign out error:", error)
         setError("Error signing out")
       } else {
+        // Force a page reload to ensure clean state
         window.location.reload()
       }
     } catch (err) {
@@ -121,13 +134,17 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
   }
 
   const handleTitleClick = () => {
-    onViewChange("dashboard")
+    setCurrentView("dashboard")
   }
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
     try {
+      // Small delay to show the refresh animation
       await new Promise((resolve) => setTimeout(resolve, 500))
+      // Store current view in localStorage before refresh
+      localStorage.setItem("poker-current-view", activeView)
+      // Reload the page while preserving authentication
       window.location.reload()
     } catch (error) {
       console.error("Error refreshing:", error)
@@ -159,15 +176,12 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
     return "text-text-secondary"
   }
 
-  if (!user) {
-    return null
-  }
-
   return (
     <>
       <nav className="bg-surface-card border-b border-border-default">
         <div className="container mx-auto px-3 py-2 sm:px-4 sm:py-3">
           <div className="flex justify-between items-center">
+            {/* Mobile-optimized title with refresh button */}
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleTitleClick}
@@ -206,9 +220,9 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
 
             <div className="flex items-center space-x-1 sm:space-x-2">
               <button
-                onClick={() => onViewChange("dashboard")}
+                onClick={() => setCurrentView("dashboard")}
                 className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  currentView === "dashboard"
+                  activeView === "dashboard"
                     ? "bg-brand-primary text-white"
                     : "text-text-secondary hover:text-text-primary"
                 }`}
@@ -217,9 +231,9 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
               </button>
 
               <button
-                onClick={() => onViewChange("friends")}
+                onClick={() => setCurrentView("friends")}
                 className={`relative px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  currentView === "friends"
+                  activeView === "friends"
                     ? "bg-brand-primary text-white"
                     : "text-text-secondary hover:text-text-primary"
                 }`}
@@ -230,17 +244,6 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
                     {pendingRequestsCount > 9 ? "9+" : pendingRequestsCount}
                   </span>
                 )}
-              </button>
-
-              <button
-                onClick={() => onViewChange("stats")}
-                className={`px-2 py-1.5 sm:px-3 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  currentView === "stats"
-                    ? "bg-brand-primary text-white"
-                    : "text-text-secondary hover:text-text-primary"
-                }`}
-              >
-                Stats
               </button>
 
               {user && (
@@ -262,6 +265,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
       {/* Profile Modal */}
       <Modal isOpen={isProfileModalOpen} onClose={handleCloseModal} title="User Profile">
         <div className="space-y-6">
+          {/* User Info */}
           <div className="bg-surface-input p-4 rounded-lg border border-border-default">
             <h3 className="text-lg font-semibold text-text-primary mb-2">Account Information</h3>
             <p className="text-text-secondary">
@@ -273,6 +277,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
             </p>
           </div>
 
+          {/* All-Time Stats - Always show, even with zero values */}
           <Card className="bg-gradient-to-r from-slate-800 to-slate-700 border-2 border-brand-primary">
             <h3 className="text-lg font-semibold text-brand-primary mb-4 flex items-center">
               <span className="mr-2">📊</span>
@@ -306,6 +311,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
             )}
           </Card>
 
+          {/* Update Profile Form */}
           <form onSubmit={handleUpdateProfile} className="space-y-4">
             <Input
               label="Full Name"
@@ -331,6 +337,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentView, onViewChange }) => {
             </Button>
           </form>
 
+          {/* Actions */}
           <div className="flex justify-between pt-4 border-t border-border-default">
             <Button onClick={handleCloseModal} variant="ghost">
               Close

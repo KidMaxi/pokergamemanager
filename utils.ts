@@ -62,19 +62,3 @@ export const formatDurationCompact = (durationMs: number): string => {
     return `${minutes}m`
   }
 }
-
-export const formatElapsedTime = (startTime: string): string => {
-  const duration = calculateDuration(startTime)
-  return formatDuration(duration)
-}
-
-export const getInitials = (name: string): string => {
-  if (!name) return "?"
-
-  const words = name.trim().split(/\s+/)
-  if (words.length === 1) {
-    return words[0].charAt(0).toUpperCase()
-  }
-
-  return (words[0].charAt(0) + words[words.length - 1].charAt(0)).toUpperCase()
-}

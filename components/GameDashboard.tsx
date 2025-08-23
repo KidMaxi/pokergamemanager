@@ -9,7 +9,8 @@ import Input from "./common/Input"
 import Modal from "./common/Modal"
 import Card from "./common/Card"
 import LiveTimer from "./common/LiveTimer"
-import { useSupabase } from "../contexts/SupabaseProvider"
+import { useAuth } from "../contexts/AuthContext"
+import { supabase } from "../lib/supabase"
 import GameInvitationCard from "./GameInvitationCard"
 
 interface GameDashboardProps {
@@ -139,8 +140,7 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
   onSelectGame,
   onDeleteGame,
 }) => {
-  const { session, supabase } = useSupabase()
-  const user = session?.user
+  const { user } = useAuth()
   const [isNewGameModalOpen, setIsNewGameModalOpen] = useState(false)
   const [newGameName, setNewGameName] = useState(`Poker Game - ${new Date().toLocaleDateString()}`)
   const [pointRate, setPointRate] = useState(0.1)
@@ -204,32 +204,14 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
     setLoadingFriends(true)
     try {
-      // Get bidirectional friendships - where user is either user_id or friend_id
+      console.log("[v0] Loading friends for game invitations, user:", user.id)
+
       const { data: friendsData, error } = await supabase
         .from("friendships")
-        .select(`
-          id, 
-          user_id, 
-          friend_id, 
-          created_at,
-          user_profile:profiles!friendships_user_id_fkey (
-            id,
-            full_name,
-            email,
-            all_time_profit_loss,
-            games_played,
-            total_wins
-          ),
-          friend_profile:profiles!friendships_friend_id_fkey (
-            id,
-            full_name,
-            email,
-            all_time_profit_loss,
-            games_played,
-            total_wins
-          )
-        `)
+        .select("id, user_id, friend_id, created_at")
         .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+
+      console.log("[v0] Friendships query result:", { friendsData, error })
 
       if (error) {
         console.error("Error loading friendships:", error)
@@ -238,43 +220,39 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
       }
 
       if (!friendsData || friendsData.length === 0) {
+        console.log("[v0] No friendships found")
         setFriends([])
         return
       }
 
-      // Transform the data to get the friend's profile (not the current user's)
-      const friendsWithProfiles = friendsData
-        .map((friendship) => {
-          // Determine which profile is the friend's profile
-          const isUserInitiator = friendship.user_id === user.id
-          const friendProfile = isUserInitiator ? friendship.friend_profile : friendship.user_profile
-          const friendId = isUserInitiator ? friendship.friend_id : friendship.user_id
+      const friendIds = friendsData.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id))
 
-          // Filter out self-friendships
-          if (friendId === user.id) {
-            return null
-          }
+      console.log("[v0] Fetching profiles for friend IDs:", friendIds)
 
-          return {
-            id: friendship.id,
-            user_id: friendship.user_id,
-            friend_id: friendId,
-            created_at: friendship.created_at,
-            friend_profile: friendProfile,
-          }
-        })
-        .filter(Boolean) // Remove null entries
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", friendIds)
 
-      // Deduplicate friends based on friend_id
-      const uniqueFriends = new Map()
-      friendsWithProfiles.forEach((friend) => {
-        if (friend && !uniqueFriends.has(friend.friend_id)) {
-          uniqueFriends.set(friend.friend_id, friend)
+      console.log("[v0] Profiles query result:", { profilesData, profilesError })
+
+      if (profilesError) {
+        console.error("Error loading friend profiles:", profilesError)
+        setFriends([])
+        return
+      }
+
+      const friendsWithProfiles = friendsData.map((friendship) => {
+        const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
+        return {
+          ...friendship,
+          friend_id: friendId,
+          friend_profile: profilesData?.find((p) => p.id === friendId),
         }
       })
 
-      setFriends(Array.from(uniqueFriends.values()))
-      console.log(`✅ Loaded ${uniqueFriends.size} friends for game invitations`)
+      console.log("[v0] Mapped friends with profiles:", friendsWithProfiles.length)
+      setFriends(friendsWithProfiles)
     } catch (error) {
       console.error("Error loading friends:", error)
       setFriends([])
@@ -461,69 +439,43 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
           />
 
           {/* Friend Selection */}
-          <div className="space-y-3">
-            <label className="block text-sm font-medium text-white">Invite Friends (Optional)</label>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-text-primary">Invite Friends (Optional)</label>
             {loadingFriends ? (
-              <div className="flex items-center justify-center py-4">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-400"></div>
-                <span className="ml-2 text-sm text-gray-400">Loading friends...</span>
-              </div>
+              <p className="text-sm text-text-secondary">Loading friends...</p>
             ) : friends.length === 0 ? (
-              <div className="text-center py-4 bg-slate-800/50 rounded-lg border border-slate-600">
-                <p className="text-sm text-gray-400 mb-2">No friends to invite yet</p>
-                <p className="text-xs text-gray-500">Add friends from the Friends tab to invite them to games!</p>
-              </div>
+              <p className="text-sm text-text-secondary">No friends to invite. Add friends first!</p>
             ) : (
-              <div className="space-y-2">
-                <div className="max-h-40 overflow-y-auto bg-slate-800/50 rounded-lg border border-slate-600 p-3">
-                  <div className="space-y-2">
-                    {friends.map((friendship) => (
-                      <label
-                        key={friendship.friend_id}
-                        className="flex items-center space-x-3 cursor-pointer hover:bg-slate-700/50 p-2 rounded"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedFriends.includes(friendship.friend_id)}
-                          onChange={() => handleFriendToggle(friendship.friend_id)}
-                          className="rounded border-slate-500 bg-slate-700 text-green-500 focus:ring-green-500 focus:ring-offset-slate-800"
-                        />
-                        <div className="flex-1">
-                          <span className="text-sm font-medium text-white">
-                            {friendship.friend_profile?.full_name || friendship.friend_profile?.email || "Unknown"}
-                          </span>
-                          {friendship.friend_profile?.email && friendship.friend_profile?.full_name && (
-                            <p className="text-xs text-gray-400">{friendship.friend_profile.email}</p>
-                          )}
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                {selectedFriends.length > 0 && (
-                  <div className="bg-green-900/20 border border-green-600 rounded-lg p-2">
-                    <p className="text-sm text-green-400 font-medium">
-                      ✓ {selectedFriends.length} friend{selectedFriends.length > 1 ? "s" : ""} will be invited to join
-                      this game
-                    </p>
-                  </div>
-                )}
+              <div className="max-h-32 overflow-y-auto space-y-2 border border-border-default rounded p-2">
+                {friends.map((friendship) => (
+                  <label key={friendship.friend_id} className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedFriends.includes(friendship.friend_id)}
+                      onChange={() => handleFriendToggle(friendship.friend_id)}
+                      className="rounded border-border-default"
+                    />
+                    <span className="text-sm text-text-primary">
+                      {friendship.friend_profile?.full_name || friendship.friend_profile?.email}
+                    </span>
+                  </label>
+                ))}
               </div>
+            )}
+            {selectedFriends.length > 0 && (
+              <p className="text-sm text-blue-400">
+                {selectedFriends.length} friend{selectedFriends.length > 1 ? "s" : ""} will be invited
+              </p>
             )}
           </div>
 
-          {formError && (
-            <div className="bg-red-900/20 border border-red-600 rounded-lg p-3">
-              <p className="text-sm text-red-400">{formError}</p>
-            </div>
-          )}
-
-          <div className="flex justify-end space-x-3 pt-4">
+          {formError && <p className="text-sm text-red-500">{formError}</p>}
+          <div className="flex justify-end space-x-2">
             <Button type="button" variant="ghost" onClick={() => setIsNewGameModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" className="px-6">
-              Create Game & Send Invites
+            <Button type="submit" variant="primary">
+              Create Game
             </Button>
           </div>
         </form>

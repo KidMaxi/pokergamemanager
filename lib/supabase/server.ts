@@ -2,8 +2,8 @@ import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 
 /**
- * Server-side Supabase client for reading game results
- * Creates a new client instance for each request (important for Fluid compute)
+ * Server-side Supabase client with proper cookie handling
+ * Always create a new client within each function when using it
  */
 export async function createClient() {
   const cookieStore = await cookies()
@@ -18,12 +18,9 @@ export async function createClient() {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
         } catch {
           // The "setAll" method was called from a Server Component.
-          // This can be ignored if you have middleware refreshing
-          // user sessions.
+          // This can be ignored if you have middleware refreshing user sessions.
         }
       },
     },
   })
 }
-
-export const supabaseServer = createClient

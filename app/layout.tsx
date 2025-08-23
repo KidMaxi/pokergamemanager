@@ -2,8 +2,7 @@ import type React from "react"
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
-import { SupabaseProvider } from "../contexts/SupabaseProvider"
-import PWAInstall from "../components/PWAInstall"
+import { AuthProvider } from "../contexts/AuthContext"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -24,13 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <SupabaseProvider>
-          {children}
-          <PWAInstall />
-          <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
-            Poker Homegame Manager V52 &copy; {new Date().getFullYear()}
-          </footer>
-        </SupabaseProvider>
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   )

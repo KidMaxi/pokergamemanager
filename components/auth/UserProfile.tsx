@@ -2,8 +2,8 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
-import { useSupabase } from "../../contexts/SupabaseProvider"
+import { useState } from "react"
+import { useAuth } from "../../contexts/AuthContext"
 import Modal from "../common/Modal"
 import Input from "../common/Input"
 import Button from "../common/Button"
@@ -14,30 +14,11 @@ interface UserProfileProps {
 }
 
 export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
-  const { session, supabase } = useSupabase()
-  const user = session?.user
-  const [profile, setProfile] = useState<any>(null)
-  const [fullName, setFullName] = useState("")
+  const { user, profile, updateProfile, signOut } = useAuth()
+  const [fullName, setFullName] = useState(profile?.full_name || "")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
-
-  useEffect(() => {
-    if (isOpen && user) {
-      fetchProfile()
-    }
-  }, [isOpen, user])
-
-  const fetchProfile = async () => {
-    try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", user!.id).single()
-      if (error) throw error
-      setProfile(data)
-      setFullName(data?.full_name || "")
-    } catch (err) {
-      console.error("Error fetching profile:", err)
-    }
-  }
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -46,13 +27,14 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     setSuccess("")
 
     try {
-      const { error } = await supabase.from("profiles").update({ full_name: fullName.trim() }).eq("id", user!.id)
+      const { error } = await updateProfile({
+        full_name: fullName.trim(),
+      })
 
       if (error) {
         setError(error.message)
       } else {
         setSuccess("Profile updated successfully!")
-        await fetchProfile()
       }
     } catch (err) {
       setError("An unexpected error occurred")
@@ -63,7 +45,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
 
   const handleSignOut = async () => {
     try {
-      await supabase.auth.signOut()
+      await signOut()
       onClose()
     } catch (err) {
       setError("Error signing out")
@@ -88,45 +70,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
               <strong>Admin Account</strong>
             </p>
           )}
-        </div>
-
-        {/* Poker Stats Section */}
-        <div className="bg-surface-card p-4 rounded-lg">
-          <h3 className="text-lg font-semibold text-text-primary mb-3">Poker Statistics</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="text-center p-3 bg-surface-background rounded-lg">
-              <div className="text-2xl font-bold text-text-primary">{profile?.games_played || 0}</div>
-              <div className="text-sm text-text-secondary">Games Played</div>
-            </div>
-            <div className="text-center p-3 bg-surface-background rounded-lg">
-              <div className="text-2xl font-bold text-text-primary">{profile?.total_wins || 0}</div>
-              <div className="text-sm text-text-secondary">Total Wins</div>
-            </div>
-            <div className="text-center p-3 bg-surface-background rounded-lg">
-              <div
-                className={`text-2xl font-bold ${
-                  (profile?.games_played || 0) > 0
-                    ? `${Math.round(((profile.total_wins || 0) / profile.games_played) * 100)}%`
-                    : "0%"
-                }`}
-              >
-                {profile?.games_played && profile.games_played > 0
-                  ? `${Math.round(((profile.total_wins || 0) / profile.games_played) * 100)}%`
-                  : "0%"}
-              </div>
-              <div className="text-sm text-text-secondary">Win Rate</div>
-            </div>
-            <div className="text-center p-3 bg-surface-background rounded-lg">
-              <div
-                className={`text-2xl font-bold ${
-                  (profile?.all_time_profit_loss || 0) >= 0 ? "text-green-500" : "text-red-500"
-                }`}
-              >
-                ${profile?.all_time_profit_loss ? Number(profile.all_time_profit_loss).toFixed(2) : "0.00"}
-              </div>
-              <div className="text-sm text-text-secondary">P/L</div>
-            </div>
-          </div>
         </div>
 
         {/* Update Profile Form */}
