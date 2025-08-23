@@ -492,6 +492,7 @@ export default function Home() {
       ...session,
       currentPhysicalPointsOnTable: 0,
       playersInGame: [],
+      invitedUsers: [], // Start with empty array, users will be added when they accept
     }
 
     // Automatically add the current user as a player with standard buy-in
