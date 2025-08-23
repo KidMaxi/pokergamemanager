@@ -51,13 +51,19 @@ export async function finalizeAndUpdateStats(session: GameSession) {
 
   console.log(`[v0] Starting finalization for game ${gameId} with ${session.playersInGame?.length || 0} players`)
 
-  const rows = (session.playersInGame || [])
+  const playersWithProfiles = await matchPlayersWithProfiles(session.playersInGame || [])
+
+  const rows = playersWithProfiles
     .filter((p) => p.profileId)
     .map((p) => ({
       profileId: p.profileId!,
       name: p.name,
       ...perPlayer(p, session.pointToCashRate),
     }))
+
+  console.log(
+    `[v0] Found ${rows.length} players with profiles out of ${session.playersInGame?.length || 0} total players`,
+  )
 
   if (!rows.length) {
     console.warn("No players with profileId found - no stats to update")
@@ -146,6 +152,55 @@ export async function finalizeAndUpdateStats(session: GameSession) {
   console.log(`[v0] Verifying results were stored in database...`)
   const storedResults = await getGameResults(gameId)
   console.log(`[v0] Stored results verification:`, storedResults)
+}
+
+async function matchPlayersWithProfiles(players: any[]) {
+  const supabase = getSupabaseBrowser()
+
+  console.log(`[v0] Matching ${players.length} players with profiles...`)
+
+  // Get all player names for matching
+  const playerNames = players.map((p) => p.name.toLowerCase().trim()).filter(Boolean)
+
+  if (playerNames.length === 0) {
+    return players
+  }
+
+  // Query profiles that match player names (case-insensitive)
+  const { data: profiles, error } = await supabase
+    .from("profiles")
+    .select("id, full_name")
+    .or(playerNames.map((name) => `full_name.ilike.${name}`).join(","))
+
+  if (error) {
+    console.error("Error fetching profiles for matching:", error)
+    return players
+  }
+
+  console.log(`[v0] Found ${profiles?.length || 0} matching profiles`)
+
+  // Match players with profiles
+  const playersWithProfiles = players.map((player) => {
+    // Skip if already has profileId
+    if (player.profileId) {
+      return player
+    }
+
+    // Find matching profile by name (case-insensitive)
+    const matchingProfile = profiles?.find(
+      (profile) => profile.full_name?.toLowerCase().trim() === player.name.toLowerCase().trim(),
+    )
+
+    if (matchingProfile) {
+      console.log(`[v0] Matched player "${player.name}" with profile ID: ${matchingProfile.id}`)
+      return { ...player, profileId: matchingProfile.id }
+    }
+
+    console.log(`[v0] No profile found for player "${player.name}"`)
+    return player
+  })
+
+  return playersWithProfiles
 }
 
 export async function getGameResults(gameId: string) {

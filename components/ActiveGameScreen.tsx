@@ -582,7 +582,9 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
             return (
               <div
                 key={player.id}
-                className={`bg-slate-800/60 backdrop-blur-sm rounded-lg p-4 md:p-6 border border-slate-700/50`}
+                className={`bg-slate-800/60 rounded-lg p-4 md:p-6 border border-slate-700/50 ${
+                  player.hasCashedOut ? "bg-red-600/60" : ""
+                }`}
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -593,7 +595,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                       <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                         {player.name}
                         {player.hasCashedOut && (
-                          <span className="text-xs bg-red-600 px-2 py-1 rounded">CASHED OUT</span>
+                          <span className="text-xs bg-red-600 px-2 py-1 rounded font-semibold">CASHED OUT</span>
                         )}
                       </h3>
 
@@ -908,7 +910,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
 
               <div className="bg-gray-700 p-4 rounded-lg mb-6">
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-300">Total Chips in Play:</span>
+                  <span className="text-gray-300">Total Points in Play:</span>
                   <span className="text-white font-bold">
                     {calculatePhysicalPointsForActivePlayers(localSession.playersInGame)}
                   </span>
@@ -923,7 +925,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                 </div>
                 {getTotalChipsInFinalStandings() !==
                   calculatePhysicalPointsForActivePlayers(localSession.playersInGame) && (
-                  <p className="text-red-400 text-sm mt-2">⚠️ Total entered doesn't match chips in play</p>
+                  <p className="text-red-400 text-sm mt-2">⚠️ Total entered doesn't match points in play</p>
                 )}
               </div>
 
@@ -990,7 +992,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                 <div className="bg-gray-700 p-4 rounded-lg mb-4">
                   <h3 className="text-lg font-semibold text-gray-300 mb-2 flex items-center gap-2">
                     Already Cashed Out ({cashedOutPlayers.length})
-                    <span className="text-xs bg-red-600 px-2 py-1 rounded">CASHED OUT</span>
+                    <span className="text-xs bg-red-600 px-2 py-1 rounded font-semibold">CASHED OUT</span>
                   </h3>
                   <div className="space-y-2">
                     {cashedOutPlayers.map((player) => (
@@ -1003,7 +1005,7 @@ const ActiveGameScreen: React.FC<ActiveGameScreenProps> = ({
                             {getInitials(player.name)}
                           </div>
                           <span className="text-white font-medium">{player.name}</span>
-                          <span className="text-xs bg-red-600 px-2 py-1 rounded">CASHED OUT</span>
+                          <span className="text-xs bg-red-600 px-2 py-1 rounded font-semibold">CASHED OUT</span>
                         </div>
                         <span className="text-green-400 font-bold">${(player.cashOutAmount || 0).toFixed(2)}</span>
                       </div>
