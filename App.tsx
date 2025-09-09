@@ -19,22 +19,65 @@ const App: React.FC = () => {
   const [dataLoading, setDataLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastDataFetch, setLastDataFetch] = useState<number>(0)
+  const [isRecoveringFromRefresh, setIsRecoveringFromRefresh] = useState(false)
+  const [componentCleanup, setComponentCleanup] = useState<(() => void)[]>([])
 
-  const viewState = useMemo(
-    () => ({
-      currentView,
-      activeGameId,
-      loading: loading || dataLoading,
-    }),
-    [currentView, activeGameId, loading, dataLoading],
-  )
+  useEffect(() => {
+    const refreshTimestamp = localStorage.getItem("poker-refresh-timestamp")
+    const refreshCount = Number.parseInt(localStorage.getItem("poker-refresh-count") || "0")
+
+    if (refreshTimestamp) {
+      const timeSinceRefresh = Date.now() - Number.parseInt(refreshTimestamp)
+      if (timeSinceRefresh < 10000) {
+        // Within 10 seconds of refresh
+        console.log("[v0] Detected recent refresh, implementing recovery mode")
+        setIsRecoveringFromRefresh(true)
+
+        // Clear refresh timestamp to prevent repeated recovery
+        localStorage.removeItem("poker-refresh-timestamp")
+
+        const recoveryDelay = Math.min(1000 + refreshCount * 500, 5000)
+        setTimeout(() => {
+          setIsRecoveringFromRefresh(false)
+          console.log("[v0] Recovery mode completed")
+        }, recoveryDelay)
+      }
+    }
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      console.error("[v0] Unhandled promise rejection:", event.reason)
+      event.preventDefault()
+
+      if (!isRecoveringFromRefresh) {
+        setError("An unexpected error occurred. The application will attempt to recover.")
+      }
+    }
+
+    window.addEventListener("unhandledrejection", handleUnhandledRejection)
+
+    return () => {
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection)
+      componentCleanup.forEach((cleanup) => {
+        try {
+          cleanup()
+        } catch (error) {
+          console.error("[v0] Error during cleanup:", error)
+        }
+      })
+    }
+  }, [isRecoveringFromRefresh, componentCleanup])
 
   const checkUser = useCallback(async () => {
+    let timeoutId: NodeJS.Timeout | null = null
+
     try {
       console.log("[v0] Starting user authentication check")
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Authentication timeout")), 10000),
-      )
+
+      const timeoutDuration = isRecoveringFromRefresh ? 5000 : 10000
+
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("Authentication timeout")), timeoutDuration)
+      })
 
       const authPromise = supabase.auth.getUser()
 
@@ -42,44 +85,60 @@ const App: React.FC = () => {
         data: { user },
       } = (await Promise.race([authPromise, timeoutPromise])) as any
 
+      if (timeoutId) clearTimeout(timeoutId)
+
       console.log("[v0] User authentication result:", user ? "authenticated" : "not authenticated")
       setUser(user)
       setError(null)
     } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId)
+
       console.error("[v0] Error checking user:", error)
-      setError("Authentication failed. Please refresh the page.")
+
+      if (!isRecoveringFromRefresh) {
+        setError("Authentication failed. Please refresh the page.")
+      }
       setUser(null)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isRecoveringFromRefresh])
 
   const loadPlayersFromDatabase = useCallback(
     async (forceRefresh = false) => {
       const now = Date.now()
-      const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+      const CACHE_DURATION = isRecoveringFromRefresh ? 0 : 5 * 60 * 1000 // No cache during recovery
 
-      if (!forceRefresh && now - lastDataFetch < CACHE_DURATION) {
+      if (!forceRefresh && !isRecoveringFromRefresh && now - lastDataFetch < CACHE_DURATION) {
         console.log("[v0] Using cached player data")
         return
       }
+
+      let timeoutId: NodeJS.Timeout | null = null
 
       try {
         setDataLoading(true)
         setError(null)
         console.log("[v0] Loading players from database")
 
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Database timeout")), 15000),
-        )
+        const timeoutDuration = isRecoveringFromRefresh ? 10000 : 15000
+
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("Database timeout")), timeoutDuration)
+        })
 
         const queryPromise = supabase.from("profiles").select("id, full_name").order("full_name")
 
         const { data, error } = (await Promise.race([queryPromise, timeoutPromise])) as any
 
+        if (timeoutId) clearTimeout(timeoutId)
+
         if (error) {
           console.error("[v0] Database error loading players:", error)
-          setError("Failed to load player data. Please try refreshing.")
+
+          if (!isRecoveringFromRefresh) {
+            setError("Failed to load player data. Please try refreshing.")
+          }
           return
         }
 
@@ -93,22 +152,39 @@ const App: React.FC = () => {
         setLastDataFetch(now)
         setError(null)
       } catch (error) {
+        if (timeoutId) clearTimeout(timeoutId)
+
         console.error("[v0] Error loading players from database:", error)
-        setError("Failed to load player data. Please check your connection and try refreshing.")
+
+        if (!isRecoveringFromRefresh) {
+          setError("Failed to load player data. Please check your connection and try refreshing.")
+        }
       } finally {
         setDataLoading(false)
       }
     },
-    [lastDataFetch],
+    [lastDataFetch, isRecoveringFromRefresh],
   )
+
+  const registerCleanup = useCallback((cleanup: () => void) => {
+    setComponentCleanup((prev) => [...prev, cleanup])
+    return () => {
+      setComponentCleanup((prev) => prev.filter((c) => c !== cleanup))
+    }
+  }, [])
 
   useEffect(() => {
     const initializeApp = async () => {
-      console.log("[v0] Initializing application")
+      console.log("[v0] Initializing application, recovery mode:", isRecoveringFromRefresh)
 
       const savedView = localStorage.getItem("poker-current-view") as View
       if (savedView && ["dashboard", "friends", "activeGame"].includes(savedView)) {
         setCurrentView(savedView)
+      }
+
+      if (isRecoveringFromRefresh) {
+        console.log("[v0] Recovery mode active, adding initialization delay")
+        await new Promise((resolve) => setTimeout(resolve, 1000))
       }
 
       await checkUser()
@@ -118,7 +194,16 @@ const App: React.FC = () => {
     }
 
     initializeApp()
-  }, [checkUser, loadPlayersFromDatabase])
+  }, [checkUser, loadPlayersFromDatabase, isRecoveringFromRefresh])
+
+  const viewState = useMemo(
+    () => ({
+      currentView,
+      activeGameId,
+      loading: loading || dataLoading,
+    }),
+    [currentView, activeGameId, loading, dataLoading],
+  )
 
   const handleAddNewPlayerGlobally = useCallback(
     (name: string): Player | null => {
@@ -274,22 +359,47 @@ const App: React.FC = () => {
   }, [])
 
   const renderView = useCallback(() => {
-    if (error) {
+    if (error && !isRecoveringFromRefresh) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-surface-main p-4">
           <div className="text-center max-w-md">
             <div className="text-red-400 text-6xl mb-4">⚠️</div>
             <h2 className="text-xl font-semibold text-text-primary mb-2">Something went wrong</h2>
             <p className="text-text-secondary mb-4">{error}</p>
-            <button
-              onClick={() => {
-                setError(null)
-                loadPlayersFromDatabase(true)
-              }}
-              className="bg-brand-primary text-white px-4 py-2 rounded-md hover:bg-brand-primary-hover transition-colors"
-            >
-              Try Again
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  setError(null)
+                  loadPlayersFromDatabase(true)
+                }}
+                className="bg-brand-primary text-white px-4 py-2 rounded-md hover:bg-brand-primary-hover transition-colors w-full"
+              >
+                Try Again
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.removeItem("poker-refresh-count")
+                  localStorage.removeItem("poker-last-refresh")
+                  localStorage.removeItem("poker-refresh-timestamp")
+                  window.location.reload()
+                }}
+                className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors w-full"
+              >
+                Full Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    if (isRecoveringFromRefresh) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-surface-main">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
+            <p className="text-text-secondary">Recovering from refresh...</p>
+            <p className="text-text-secondary text-sm mt-2">Please wait while the application stabilizes</p>
           </div>
         </div>
       )
@@ -336,6 +446,7 @@ const App: React.FC = () => {
     }
   }, [
     error,
+    isRecoveringFromRefresh,
     currentView,
     gameSessions,
     activeGameId,

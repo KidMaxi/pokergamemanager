@@ -33,6 +33,23 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
   const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+  const [lastRefreshTime, setLastRefreshTime] = useState(0)
+  const [refreshCount, setRefreshCount] = useState(0)
+
+  useEffect(() => {
+    const refreshCountFromStorage = Number.parseInt(localStorage.getItem("poker-refresh-count") || "0")
+    setRefreshCount(refreshCountFromStorage)
+
+    const lastRefresh = Number.parseInt(localStorage.getItem("poker-last-refresh") || "0")
+    if (Date.now() - lastRefresh > 5 * 60 * 1000) {
+      localStorage.setItem("poker-refresh-count", "0")
+      setRefreshCount(0)
+    }
+
+    return () => {
+      console.log("[v0] Navbar component unmounting, cleaning up...")
+    }
+  }, [])
 
   useEffect(() => {
     if (user) {
@@ -44,7 +61,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
 
   const handleOpenProfile = async () => {
     if (user) {
-      // Load current profile data including stats
       try {
         const { data, error } = await supabase
           .from("profiles")
@@ -61,7 +77,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
           })
         } else if (error) {
           console.error("Error loading profile:", error)
-          // Set default stats if profile doesn't exist yet
           setUserStats({
             all_time_profit_loss: 0,
             games_played: 0,
@@ -70,7 +85,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
         }
       } catch (err) {
         console.error("Error loading profile:", err)
-        // Set default stats on error
         setUserStats({
           all_time_profit_loss: 0,
           games_played: 0,
@@ -109,14 +123,13 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
 
   const handleSignOut = async () => {
     try {
-      setIsProfileModalOpen(false) // Close modal immediately
+      setIsProfileModalOpen(false)
       const { error } = await signOut()
 
       if (error) {
         console.error("Sign out error:", error)
         setError("Error signing out")
       } else {
-        // Force a page reload to ensure clean state
         window.location.reload()
       }
     } catch (err) {
@@ -138,17 +151,55 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
   }
 
   const handleRefresh = async () => {
+    const now = Date.now()
+
+    if (now - lastRefreshTime < 2000) {
+      console.log("[v0] Refresh throttled - too soon since last refresh")
+      return
+    }
+
+    const currentRefreshCount = refreshCount + 1
+    if (currentRefreshCount > 5) {
+      console.error("[v0] Too many refreshes detected, implementing safety delay")
+      if (!confirm("You've refreshed multiple times recently. This might indicate an issue. Continue anyway?")) {
+        return
+      }
+      localStorage.setItem("poker-refresh-count", "0")
+      setRefreshCount(0)
+    } else {
+      localStorage.setItem("poker-refresh-count", currentRefreshCount.toString())
+      setRefreshCount(currentRefreshCount)
+    }
+
+    setLastRefreshTime(now)
+    localStorage.setItem("poker-last-refresh", now.toString())
+
     setIsRefreshing(true)
+
     try {
-      // Small delay to show the refresh animation
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      // Store current view in localStorage before refresh
+      console.log("[v0] Starting refresh process, count:", currentRefreshCount)
+
+      const controller = new AbortController()
+
+      localStorage.removeItem("poker-cached-friends")
+      localStorage.removeItem("poker-cached-games")
+
+      const delay = Math.min(500 + currentRefreshCount * 200, 2000)
+      await new Promise((resolve) => setTimeout(resolve, delay))
+
       localStorage.setItem("poker-current-view", activeView)
-      // Reload the page while preserving authentication
-      window.location.reload()
+      localStorage.setItem("poker-refresh-timestamp", now.toString())
+
+      console.log("[v0] Performing page reload...")
+
+      window.location.replace(window.location.href)
     } catch (error) {
-      console.error("Error refreshing:", error)
+      console.error("[v0] Error during refresh:", error)
       setIsRefreshing(false)
+      setError("Refresh failed. Please try again.")
+
+      localStorage.setItem("poker-refresh-count", "0")
+      setRefreshCount(0)
     }
   }
 
@@ -181,7 +232,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
       <nav className="bg-surface-card border-b border-border-default">
         <div className="container mx-auto px-3 py-2 sm:px-4 sm:py-3">
           <div className="flex justify-between items-center">
-            {/* Mobile-optimized title with refresh button */}
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleTitleClick}
@@ -262,10 +312,8 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
         </div>
       </nav>
 
-      {/* Profile Modal */}
       <Modal isOpen={isProfileModalOpen} onClose={handleCloseModal} title="User Profile">
         <div className="space-y-6">
-          {/* User Info */}
           <div className="bg-surface-input p-4 rounded-lg border border-border-default">
             <h3 className="text-lg font-semibold text-text-primary mb-2">Account Information</h3>
             <p className="text-text-secondary">
@@ -277,7 +325,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             </p>
           </div>
 
-          {/* All-Time Stats - Always show, even with zero values */}
           <Card className="bg-gradient-to-r from-slate-800 to-slate-700 border-2 border-brand-primary">
             <h3 className="text-lg font-semibold text-brand-primary mb-4 flex items-center">
               <span className="mr-2">📊</span>
@@ -311,7 +358,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             )}
           </Card>
 
-          {/* Update Profile Form */}
           <form onSubmit={handleUpdateProfile} className="space-y-4">
             <Input
               label="Full Name"
@@ -337,7 +383,6 @@ const Navbar: React.FC<NavbarProps> = ({ setCurrentView, activeView, user }) => 
             </Button>
           </form>
 
-          {/* Actions */}
           <div className="flex justify-between pt-4 border-t border-border-default">
             <Button onClick={handleCloseModal} variant="ghost">
               Close
