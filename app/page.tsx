@@ -26,6 +26,7 @@ import GameStateDebugPanel from "../components/debug/GameStateDebugPanel"
 import FriendsFeatureTestResults from "../components/debug/FriendsFeatureTestResults"
 import InvitationDiagnostics from "../components/debug/InvitationDiagnostics"
 import GameInviteSystemAnalysis from "../components/analysis/GameInviteSystemAnalysis"
+import { finalizeGameWithComprehensiveTracking } from "../lib/finalize"
 
 export default function Home() {
   const { user, loading: authLoading, emailVerified } = useAuth()
@@ -601,10 +602,20 @@ export default function Home() {
     }
 
     try {
+      console.log("[v0] Starting comprehensive game finalization...")
+
+      // First update the session in database
       await updateGameSessionInDatabase(completedSession)
 
-      // Update stats for all participants (host + invited users)
-      await updateUserStatsAfterGameCompletion(completedSession)
+      // Then use the new comprehensive finalization function
+      const finalizationResult = await finalizeGameWithComprehensiveTracking(completedSession)
+
+      if (finalizationResult.success) {
+        console.log("[v0] Comprehensive finalization successful:", finalizationResult.message)
+      } else {
+        console.error("[v0] Finalization failed:", finalizationResult.error)
+        // Still continue with local state update even if finalization fails
+      }
 
       setGameSessions((prevSessions) => {
         return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))

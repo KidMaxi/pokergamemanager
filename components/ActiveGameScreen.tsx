@@ -604,11 +604,30 @@ export default function ActiveGameScreen({
       }
     }
 
+    console.log("[v0] Finalizing game with comprehensive player tracking...")
+    console.log(
+      "[v0] Players being finalized:",
+      session.playersInGame.map((p) => ({
+        name: p.name,
+        playerId: p.playerId,
+        status: p.status,
+        isLocal: p.playerId.startsWith("local-"),
+      })),
+    )
+
     // Update all active players with their final point counts
     const updatedPlayersInGame = session.playersInGame.map((player) => {
       if (player.status === "active") {
         const finalPoints = Number.parseFloat(finalPointInputs[player.playerId])
         const cashOutAmount = finalPoints * session.pointToCashRate
+
+        console.log(`[v0] Finalizing player ${player.name}:`, {
+          playerId: player.playerId,
+          finalPoints,
+          cashOutAmount,
+          isFloatingPlayer: player.playerId.startsWith("local-"),
+        })
+
         return {
           ...player,
           pointStack: finalPoints,
@@ -626,6 +645,13 @@ export default function ActiveGameScreen({
       endTime: new Date().toISOString(),
       currentPhysicalPointsOnTable: 0,
     }
+
+    console.log("[v0] Finalized session ready for comprehensive tracking:", {
+      gameId: finalizedSession.id,
+      totalPlayers: finalizedSession.playersInGame.length,
+      floatingPlayers: finalizedSession.playersInGame.filter((p) => p.playerId.startsWith("local-")).length,
+      accountPlayers: finalizedSession.playersInGame.filter((p) => !p.playerId.startsWith("local-")).length,
+    })
 
     onEndGame(finalizedSession)
     setShowFinalizeGameModal(false)
@@ -1336,6 +1362,8 @@ export default function ActiveGameScreen({
       return
     }
 
+    console.log("[v0] Using old finalization method with comprehensive tracking...")
+
     // Create final cash-out records for all active players
     const updatedPlayersInGame = session.playersInGame.map((player) => {
       const finalInput = finalPointInputsOld.find((input) => input.playerId === player.playerId)
@@ -1343,6 +1371,13 @@ export default function ActiveGameScreen({
       if (finalInput && player.status === "active") {
         const finalPoints = Number.parseInt(finalInput.points, 10) || 0
         const finalCashValue = finalPoints * session.pointToCashRate
+
+        console.log(`[v0] Old method finalizing player ${player.name}:`, {
+          playerId: player.playerId,
+          finalPoints,
+          finalCashValue,
+          isFloatingPlayer: player.playerId.startsWith("local-"),
+        })
 
         const finalCashOutRecord: CashOutLogRecord = {
           logId: generateLogId(),
@@ -1371,6 +1406,12 @@ export default function ActiveGameScreen({
       endTime: new Date().toISOString(),
       currentPhysicalPointsOnTable: 0,
     }
+
+    console.log("[v0] Old method finalized session ready:", {
+      gameId: finalizedSession.id,
+      totalPlayers: finalizedSession.playersInGame.length,
+      floatingPlayers: finalizedSession.playersInGame.filter((p) => p.playerId.startsWith("local-")).length,
+    })
 
     onEndGame(finalizedSession)
     setIsFinalizeResultsModalOpen(false)
