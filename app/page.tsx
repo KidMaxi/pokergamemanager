@@ -42,155 +42,60 @@ export default function Home() {
   const [showInvitationDiagnostics, setShowInvitationDiagnostics] = useState(false)
   const [showSystemAnalysis, setShowSystemAnalysis] = useState(false)
 
-  const [networkStatus, setNetworkStatus] = useState<"online" | "offline" | "slow">("online")
-  const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout | null>(null)
-  const [retryCount, setRetryCount] = useState(0)
-  const [deviceInfo, setDeviceInfo] = useState<{
-    isMobile: boolean
-    isIOS: boolean
-    isAndroid: boolean
-    userAgent: string
-    viewport: { width: number; height: number }
-  } | null>(null)
-
   usePWA()
-
-  useEffect(() => {
-    const detectDevice = () => {
-      const userAgent = navigator.userAgent
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent)
-      const isIOS = /iPad|iPhone|iPod/.test(userAgent)
-      const isAndroid = /Android/.test(userAgent)
-
-      setDeviceInfo({
-        isMobile,
-        isIOS,
-        isAndroid,
-        userAgent,
-        viewport: {
-          width: window.innerWidth,
-          height: window.innerHeight,
-        },
-      })
-
-      console.log("[v0] Device detected:", { isMobile, isIOS, isAndroid, userAgent })
-    }
-
-    const handleNetworkChange = () => {
-      const connection =
-        (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection
-
-      if (navigator.onLine) {
-        if (connection) {
-          // Detect slow connections
-          const slowTypes = ["slow-2g", "2g", "3g"]
-          setNetworkStatus(slowTypes.includes(connection.effectiveType) ? "slow" : "online")
-        } else {
-          setNetworkStatus("online")
-        }
-      } else {
-        setNetworkStatus("offline")
-      }
-    }
-
-    const handleResize = () => {
-      if (deviceInfo) {
-        setDeviceInfo((prev) =>
-          prev
-            ? {
-                ...prev,
-                viewport: {
-                  width: window.innerWidth,
-                  height: window.innerHeight,
-                },
-              }
-            : null,
-        )
-      }
-    }
-
-    detectDevice()
-    handleNetworkChange()
-
-    window.addEventListener("online", handleNetworkChange)
-    window.addEventListener("offline", handleNetworkChange)
-    window.addEventListener("resize", handleResize)
-
-    return () => {
-      window.removeEventListener("online", handleNetworkChange)
-      window.removeEventListener("offline", handleNetworkChange)
-      window.removeEventListener("resize", handleResize)
-    }
-  }, [])
 
   // Use game state sync hook for better refresh handling
   const gameStateSync = useGameStateSync({
     sessions: gameSessions,
     onSessionsUpdate: setGameSessions,
-    autoSaveInterval: networkStatus === "slow" ? 60000 : 30000, // Adjust save interval based on network
-    enableVisibilitySync: true,
+    autoSaveInterval: 30000, // Save every 30 seconds
+    enableVisibilitySync: true, // Sync when user switches tabs
   })
 
-  const checkConnection = async (timeout = 10000) => {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeout)
-
+  const checkConnection = async () => {
     try {
-      const { data, error } = await supabase.from("profiles").select("id").limit(1).abortSignal(controller.signal)
-
-      clearTimeout(timeoutId)
+      const { data, error } = await supabase.from("profiles").select("id").limit(1).single()
       return !error
-    } catch (error) {
-      clearTimeout(timeoutId)
-      console.error("[v0] Connection check failed:", error)
+    } catch {
       return false
     }
   }
 
-  const loadUserData = async (isRetry = false) => {
+  const loadUserData = async () => {
     try {
       setLoading(true)
-      console.log("🔄 Loading user data for:", user!.id, { isRetry, retryCount })
-
-      // Set loading timeout based on network conditions
-      const timeoutDuration = networkStatus === "slow" ? 30000 : 15000
-      const timeout = setTimeout(() => {
-        console.warn("[v0] Loading timeout reached, attempting recovery")
-        if (retryCount < 3) {
-          setRetryCount((prev) => prev + 1)
-          loadUserData(true)
-        } else {
-          setLoading(false)
-          alert("Loading is taking longer than expected. Please check your connection and try refreshing.")
-        }
-      }, timeoutDuration)
-
-      setLoadingTimeout(timeout)
+      console.log("🔄 Loading user data for:", user!.id)
 
       console.log("[v0] Starting loadUserData for user:", user!.id)
 
+      // Load games created by the user
       let sessionsData
       let sessionsError
 
       try {
+        // Try with invited_users column first
         const result = await supabase
           .from("game_sessions")
           .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id")
           .eq("user_id", user!.id)
           .order("created_at", { ascending: false })
-          .limit(50) // Limit results for better performance
 
         sessionsData = result.data
         sessionsError = result.error
         console.log("✅ Loaded owned games:", sessionsData?.length || 0)
+        console.log(
+          "[v0] Owned games loaded:",
+          sessionsData?.map((g) => ({ id: g.id, name: g.name, user_id: g.user_id })),
+        )
       } catch (error) {
         console.log("invited_users column doesn't exist yet, falling back to basic query")
+
+        // Fallback query without invited_users column
         const result = await supabase
           .from("game_sessions")
           .select("id, name, start_time, end_time, status, point_to_cash_rate, players_data, user_id")
           .eq("user_id", user!.id)
           .order("created_at", { ascending: false })
-          .limit(50) // Limit results for better performance
 
         sessionsData = result.data
         sessionsError = result.error
@@ -201,45 +106,48 @@ export default function Home() {
         throw new Error(`Database error: ${sessionsError.message}`)
       }
 
+      // Also load games where the user has accepted invitations
       let invitedGamesData = []
       try {
         console.log("🔍 Loading invited games...")
+        console.log("[v0] Querying game_invitations for user:", user!.id, "with status: accepted")
 
-        const invitationPromise = supabase
+        const { data: acceptedInvitations, error: invitationsError } = await supabase
           .from("game_invitations")
           .select(`
-            game_session_id,
-            status,
-            game_session:game_sessions(
-              id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id
-            )
-          `)
+          game_session_id,
+          status,
+          game_session:game_sessions(
+            id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id
+          )
+        `)
           .eq("invitee_id", user!.id)
           .eq("status", "accepted")
-          .limit(25) // Limit invited games for performance
 
-        const { data: acceptedInvitations, error: invitationsError } = await invitationPromise
+        console.log("[v0] Raw invitation query result:", { acceptedInvitations, invitationsError })
 
         if (!invitationsError && acceptedInvitations) {
           invitedGamesData = acceptedInvitations.filter((inv) => inv.game_session).map((inv) => inv.game_session)
           console.log("✅ Loaded invited games:", invitedGamesData.length)
+          console.log(
+            "[v0] Invited games loaded:",
+            invitedGamesData.map((g) => ({ id: g.id, name: g.name, user_id: g.user_id })),
+          )
         }
       } catch (error) {
         console.log("Game invitations not available yet, skipping invited games")
+        console.log("[v0] Invitation loading error:", error)
       }
 
-      // Clear timeout on successful load
-      clearTimeout(timeout)
-      setLoadingTimeout(null)
-      setRetryCount(0)
-
-      // ... existing code for combining and transforming sessions ...
+      // Combine owned games and invited games, removing duplicates
       const allGamesMap = new Map()
 
+      // Add owned games
       sessionsData.forEach((session) => {
         allGamesMap.set(session.id, { ...session, isOwner: true })
       })
 
+      // Add invited games (don't override owned games)
       invitedGamesData.forEach((session) => {
         if (!allGamesMap.has(session.id)) {
           allGamesMap.set(session.id, { ...session, isOwner: false })
@@ -247,8 +155,23 @@ export default function Home() {
       })
 
       const combinedSessions = Array.from(allGamesMap.values())
-      console.log("📊 Total games loaded:", combinedSessions.length)
+      console.log("📊 Total games loaded:", combinedSessions.length, {
+        owned: sessionsData?.length || 0,
+        invited: invitedGamesData.length,
+        combined: combinedSessions.length,
+      })
 
+      console.log(
+        "[v0] Final combined games:",
+        combinedSessions.map((g) => ({
+          id: g.id,
+          name: g.name,
+          user_id: g.user_id,
+          isOwner: g.isOwner,
+        })),
+      )
+
+      // Transform database data to match our types with enhanced validation
       const transformedSessions: GameSession[] = combinedSessions.map((session) => {
         const baseSession: GameSession = {
           id: session.id,
@@ -257,23 +180,26 @@ export default function Home() {
           endTime: session.end_time,
           status: session.status,
           pointToCashRate: session.point_to_cash_rate,
-          standardBuyInAmount: 25,
-          currentPhysicalPointsOnTable: 0,
-          playersInGame: Array.isArray(session.players_data) ? session.players_data : [],
-          invitedUsers: Array.isArray(session.invited_users) ? session.invited_users : [],
-          isOwner: session.isOwner,
+          standardBuyInAmount: 25, // Default value
+          currentPhysicalPointsOnTable: 0, // Will be calculated
+          playersInGame: session.players_data || [], // Load from JSONB column
+          invitedUsers: session.invited_users || [], // Use empty array if column doesn't exist
+          isOwner: session.isOwner, // Track if user owns this game
         }
 
-        // Calculate physical points for active games
+        // Calculate and validate physical points for active games
         if (baseSession.status === "active" || baseSession.status === "pending_close") {
           let calculatedPoints = 0
+
           for (const player of baseSession.playersInGame) {
             if (player.status === "active") {
               calculatedPoints += player.pointStack || 0
             } else if (player.status === "cashed_out_early") {
+              // Include points left on table by early cashout players
               calculatedPoints += player.pointsLeftOnTable || 0
             }
           }
+
           baseSession.currentPhysicalPointsOnTable = calculatedPoints
         }
 
@@ -284,44 +210,17 @@ export default function Home() {
       setGameSessions(transformedSessions)
     } catch (error) {
       console.error("Error loading user data:", error)
-
-      if (networkStatus === "offline") {
-        const localSessions = gameStateSync.loadState()
-        if (localSessions.length > 0) {
-          setGameSessions(localSessions)
-          alert("You're offline. Loading your last saved data.")
-        } else {
-          alert("You're offline and no local data is available.")
-        }
-      } else {
-        // Try loading from local storage as fallback
-        const localSessions = gameStateSync.loadState()
-        setGameSessions(localSessions)
-
-        if (retryCount < 3) {
-          setTimeout(
-            () => {
-              setRetryCount((prev) => prev + 1)
-              loadUserData(true)
-            },
-            2000 * (retryCount + 1),
-          ) // Exponential backoff
-        } else {
-          alert("Unable to load your games from server. Loading local data if available.")
-        }
-      }
+      // Fallback: Try to load from local storage
+      const localSessions = gameStateSync.forceSync ? [] : []
+      setGameSessions(localSessions)
+      alert("Unable to load your games from server. Loading local data if available.")
     } finally {
       setLoading(false)
-      if (loadingTimeout) {
-        clearTimeout(loadingTimeout)
-        setLoadingTimeout(null)
-      }
-
       // Restore current view from localStorage after refresh
       const savedView = localStorage.getItem("poker-current-view")
       if (savedView && (savedView === "friends" || savedView === "dashboard")) {
         setCurrentView(savedView as View)
-        localStorage.removeItem("poker-current-view")
+        localStorage.removeItem("poker-current-view") // Clean up
       }
     }
   }
@@ -788,26 +687,17 @@ export default function Home() {
     return "default-background"
   }
 
-  const renderLoadingScreen = (message: string) => (
-    <div className="min-h-screen flex items-center justify-center bg-surface-main">
-      <div className="text-center max-w-sm mx-auto px-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
-        <p className="text-text-secondary mb-2">{message}</p>
-        {networkStatus === "slow" && (
-          <p className="text-xs text-yellow-400">Slow connection detected. This may take a moment...</p>
-        )}
-        {networkStatus === "offline" && (
-          <p className="text-xs text-red-400">You appear to be offline. Trying to load local data...</p>
-        )}
-        {retryCount > 0 && <p className="text-xs text-blue-400">Retry attempt {retryCount}/3...</p>}
-      </div>
-    </div>
-  )
-
   const renderView = () => {
     // Show loading screen while checking auth
     if (authLoading) {
-      return renderLoadingScreen("Loading...")
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-surface-main">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
+            <p className="text-text-secondary">Loading...</p>
+          </div>
+        </div>
+      )
     }
 
     // Show login screen if no user
@@ -822,15 +712,6 @@ export default function Home() {
               Track your poker games, manage players, and settle up with ease. Sign in to get started or create a new
               account.
             </p>
-            {deviceInfo?.isMobile && (
-              <div className="bg-surface-card p-3 rounded-lg border border-border-default">
-                <p className="text-xs text-text-secondary">
-                  💡 For the best experience, add this app to your home screen!
-                  {deviceInfo.isIOS && " Tap the share button and select 'Add to Home Screen'."}
-                  {deviceInfo.isAndroid && " Tap the menu and select 'Add to Home Screen'."}
-                </p>
-              </div>
-            )}
             <div className="space-y-3 pt-2">
               <button
                 onClick={() => setShowAuthModal(true)}
@@ -851,22 +732,32 @@ export default function Home() {
 
     // Show main app loading if user is verified but data is still loading
     if (loading) {
-      return renderLoadingScreen("Loading your data...")
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-surface-main">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
+            <p className="text-text-secondary">Loading your data...</p>
+          </div>
+        </div>
+      )
     }
 
-    // ... existing code for other views ...
+    // Show friends feature test results if enabled
     if (showFriendsTest) {
       return <FriendsFeatureTestResults />
     }
 
+    // Show invitation diagnostics if enabled
     if (showInvitationDiagnostics) {
       return <InvitationDiagnostics />
     }
 
+    // Show system analysis if enabled
     if (showSystemAnalysis) {
       return <GameInviteSystemAnalysis />
     }
 
+    // Show main application views
     switch (currentView) {
       case "friends":
         return <FriendsPage />
@@ -919,16 +810,6 @@ export default function Home() {
 
   return (
     <div className={`min-h-screen flex flex-col bg-surface-main ${getBackgroundClass()}`}>
-      {deviceInfo?.isMobile && networkStatus !== "online" && (
-        <div
-          className={`w-full text-center py-2 text-xs ${
-            networkStatus === "offline" ? "bg-red-600 text-white" : "bg-yellow-600 text-white"
-          }`}
-        >
-          {networkStatus === "offline" ? "📵 Offline Mode" : "🐌 Slow Connection"}
-        </div>
-      )}
-
       {/* Only show navbar if user is verified */}
       {user && emailVerified && (
         <Navbar
@@ -943,18 +824,10 @@ export default function Home() {
         />
       )}
       <main className="flex-grow bg-transparent">{renderView()}</main>
-
       {/* Only show footer if user is verified */}
       {user && emailVerified && (
         <footer className="bg-slate-900 text-center p-4 text-sm text-slate-500 border-t border-slate-700">
           Poker Homegame Manager V51 &copy; {new Date().getFullYear()}
-          {process.env.NODE_ENV === "development" && deviceInfo && (
-            <div className="mt-1 text-xs">
-              Device: {deviceInfo.isMobile ? "Mobile" : "Desktop"} |{deviceInfo.isIOS && " iOS"}
-              {deviceInfo.isAndroid && " Android"} | Network: {networkStatus} | Viewport: {deviceInfo.viewport.width}x
-              {deviceInfo.viewport.height}
-            </div>
-          )}
           {process.env.NODE_ENV === "development" && (
             <div className="mt-2 space-x-4">
               <button

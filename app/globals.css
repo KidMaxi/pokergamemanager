@@ -208,10 +208,11 @@ body {
   }
 }
 
-/* Improve scrolling performance on all devices */
-.overflow-y-auto {
-  -webkit-overflow-scrolling: touch;
-  scroll-behavior: smooth;
+/* Improve scrolling on mobile */
+@media (max-width: 768px) {
+  .overflow-y-auto {
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 /* Better button spacing for mobile */
@@ -223,123 +224,5 @@ body {
   .button-group button {
     flex: 1;
     min-width: 0;
-  }
-}
-
-/* iOS Safari specific fixes */
-@supports (-webkit-touch-callout: none) {
-  /* iOS Safari viewport fix */
-  .min-h-screen {
-    min-height: -webkit-fill-available;
-  }
-
-  /* Fix iOS Safari bottom bar issue */
-  .ios-safe-area {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-}
-
-/* Android Chrome specific optimizations */
-@media screen and (max-width: 640px) {
-  /* Prevent zoom on form inputs */
-  input[type="text"],
-  input[type="email"],
-  input[type="password"],
-  input[type="number"],
-  textarea,
-  select {
-    font-size: 16px !important;
-    transform: translateZ(0); /* Force hardware acceleration */
-  }
-}
-
-/* Performance optimizations for all devices */
-/* Hardware acceleration for animations */
-.animate-spin,
-.animate-pulse,
-.transition-all,
-.transition-colors,
-.transition-transform {
-  transform: translateZ(0);
-  will-change: transform;
-}
-
-/* Optimize image loading */
-img {
-  content-visibility: auto;
-  contain-intrinsic-size: 200px 200px;
-}
-
-/* Network-aware loading states */
-.loading-slow {
-  animation-duration: 2s;
-}
-
-.loading-offline {
-  opacity: 0.6;
-  filter: grayscale(0.3);
-}
-
-/* Device-specific layout adjustments */
-@media (max-width: 480px) {
-  /* Extra small screens (older phones) */
-  .text-sm {
-    font-size: 0.875rem;
-  }
-
-  .p-4 {
-    padding: 0.75rem;
-  }
-
-  .space-y-4 > * + * {
-    margin-top: 0.75rem;
-  }
-}
-
-@media (min-width: 768px) and (max-width: 1024px) {
-  /* Tablet optimizations */
-  .tablet-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-  }
-}
-
-/* Accessibility improvements for all devices */
-@media (prefers-reduced-motion: reduce) {
-  .animate-spin,
-  .animate-pulse,
-  .transition-all,
-  .transition-colors,
-  .transition-transform {
-    animation: none;
-    transition: none;
-  }
-}
-
-/* High contrast mode support */
-@media (prefers-contrast: high) {
-  .bg-surface-card {
-    border: 2px solid currentColor;
-  }
-
-  .text-text-secondary {
-    color: currentColor;
-  }
-}
-
-/* Touch-friendly improvements */
-@media (pointer: coarse) {
-  /* Larger touch targets for touch devices */
-  button,
-  .clickable {
-    min-height: 48px;
-    min-width: 48px;
-  }
-
-  /* Better spacing for touch interfaces */
-  .touch-spacing {
-    padding: 0.75rem;
-    margin: 0.5rem 0;
   }
 }

@@ -963,7 +963,7 @@ export default function ActiveGameScreen({
         invitedUsers: updatedInvitedUsers,
       }
 
-      // CRITICAL FIX: Call onUpdateSession to propagate changes to parent component
+      // CRITICAL FIX: Call onUpdateSession to propagate changes to parent component component
       onUpdateSession(updatedSession)
 
       console.log("Local session state updated successfully")
@@ -1025,25 +1025,25 @@ export default function ActiveGameScreen({
   }
 
   const handleAddPlayerToGame = () => {
-    console.log("[v0] Adding player to game:", newPlayerName)
+    console.log("[v0] Adding player to game:", newPlayerNameInModal)
 
-    if (!newPlayerName.trim()) {
+    if (!newPlayerNameInModal.trim()) {
       console.log("[v0] Empty player name provided")
       return
     }
 
     try {
       const existingPlayer = session.playersInGame.find(
-        (p) => p.name.toLowerCase() === newPlayerName.trim().toLowerCase(),
+        (p) => p.name.toLowerCase() === newPlayerNameInModal.trim().toLowerCase(),
       )
 
       if (existingPlayer) {
-        console.log("[v0] Player already exists in game:", newPlayerName)
+        console.log("[v0] Player already exists in game:", newPlayerNameInModal)
         alert("A player with this name is already in the game.")
         return
       }
 
-      const newPlayer = onAddNewPlayerGlobally(newPlayerName.trim())
+      const newPlayer = onAddNewPlayerGlobally(newPlayerNameInModal.trim())
       if (!newPlayer) {
         console.log("[v0] Failed to create new player globally")
         alert("Failed to add player. Please try again.")
@@ -1076,8 +1076,8 @@ export default function ActiveGameScreen({
 
       console.log("[v0] Player added successfully:", newPlayer.name)
       onUpdateSession(updatedSession)
-      setNewPlayerName("")
-      setShowAddPlayerModal(false)
+      setNewPlayerNameInModal("")
+      setIsAddPlayerModalOpen(false)
     } catch (error) {
       console.error("[v0] Error adding player to game:", error)
       alert("Failed to add player. Please try again.")
