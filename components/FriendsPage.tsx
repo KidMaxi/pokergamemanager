@@ -33,7 +33,7 @@ const FriendsPage: React.FC = () => {
     try {
       setLoading(true)
       setError("")
-      console.log("Loading friends data...")
+      console.log("[v0] Loading friends data for user:", user.id)
 
       // Initialize arrays
       let friendsWithProfiles: Friendship[] = []
@@ -47,10 +47,31 @@ const FriendsPage: React.FC = () => {
           .select("*")
           .eq("user_id", user.id)
 
+        console.log("[v0] Friendships query result:", { friendsData, friendsError })
+
         if (friendsError) {
           console.error("Error loading friends:", friendsError)
           // Don't throw here, just log and continue
         } else if (friendsData && friendsData.length > 0) {
+          console.log("[v0] Found", friendsData.length, "friendships")
+
+          // Check if these friendships are bidirectional
+          for (const friendship of friendsData) {
+            const { data: reverseCheck } = await supabase
+              .from("friendships")
+              .select("id")
+              .eq("user_id", friendship.friend_id)
+              .eq("friend_id", user.id)
+              .single()
+
+            console.log(
+              "[v0] Bidirectional check for friendship",
+              friendship.id,
+              ":",
+              reverseCheck ? "✅ Bidirectional" : "❌ Unidirectional",
+            )
+          }
+
           // Get friend profiles
           const friendIds = friendsData.map((f) => f.friend_id)
 
@@ -235,14 +256,18 @@ const FriendsPage: React.FC = () => {
   const handleAcceptRequest = async (requestId: string) => {
     try {
       setError("")
+      console.log("[v0] Accepting friend request:", requestId)
+
       const { error } = await supabase.rpc("accept_friend_request", {
         request_id: requestId,
       })
 
       if (error) {
+        console.error("[v0] Error accepting request:", error)
         throw error
       }
 
+      console.log("[v0] Friend request accepted successfully")
       setSuccess("Friend request accepted!")
       loadFriendsData() // Refresh data
     } catch (error: any) {

@@ -1,10 +1,12 @@
+import { createClient as createBrowserClient } from "./supabase/client"
+import { createClient as createServerClient } from "./supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import type { Database } from "./database.types"
 
+// Legacy client-side client (for backward compatibility)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
-// Client-side Supabase client (singleton pattern)
 let supabaseClient: ReturnType<typeof createClient<Database>> | null = null
 
 export const createClientComponentClient = () => {
@@ -19,14 +21,7 @@ export const createClientComponentClient = () => {
   return supabaseClient
 }
 
-// Server-side Supabase client
-export const createServerComponentClient = () => {
-  return createClient<Database>(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: false,
-    },
-  })
-}
+export const createServerComponentClient = createServerClient
 
 // Admin client (uses service role key)
 export const createAdminClient = () => {
@@ -39,4 +34,7 @@ export const createAdminClient = () => {
   })
 }
 
+export { createBrowserClient, createServerClient }
+
+// Legacy export for backward compatibility
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)

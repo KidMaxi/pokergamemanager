@@ -30,6 +30,31 @@ body {
   .text-balance {
     text-wrap: balance;
   }
+
+  /* Add missing bg-surface-main utility class */
+  .bg-surface-main {
+    background-color: var(--surface-main);
+  }
+
+  .bg-surface-card {
+    background-color: var(--surface-card);
+  }
+
+  .bg-surface-input {
+    background-color: var(--surface-input);
+  }
+
+  .text-text-primary {
+    color: var(--text-primary);
+  }
+
+  .text-text-secondary {
+    color: var(--text-secondary);
+  }
+
+  .border-border-default {
+    border-color: var(--border-default);
+  }
 }
 
 @layer base {
