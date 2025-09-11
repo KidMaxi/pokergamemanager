@@ -258,18 +258,38 @@ const FriendsPage: React.FC = () => {
       setError("")
       console.log("[v0] Accepting friend request:", requestId)
 
-      const { error } = await supabase.rpc("accept_friend_request", {
+      const { data, error } = await supabase.rpc("accept_friend_request", {
         request_id: requestId,
       })
 
       if (error) {
-        console.error("[v0] Error accepting request:", error)
-        throw error
+        console.error("[v0] RPC Error details:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        })
+
+        // Provide more specific error messages
+        if (error.message.includes("Friend request not found")) {
+          setError("This friend request is no longer available or you don't have permission to accept it.")
+        } else if (error.message.includes("duplicate key")) {
+          setError("You are already friends with this user.")
+        } else {
+          setError(`Failed to accept friend request: ${error.message}`)
+        }
+        return
       }
 
+      console.log("[v0] RPC Response:", data)
       console.log("[v0] Friend request accepted successfully")
+
+      setTimeout(async () => {
+        console.log("[v0] Verifying bidirectional friendship creation...")
+        await loadFriendsData()
+      }, 1000)
+
       setSuccess("Friend request accepted!")
-      loadFriendsData() // Refresh data
     } catch (error: any) {
       console.error("Error accepting request:", error)
       setError("Failed to accept friend request")
