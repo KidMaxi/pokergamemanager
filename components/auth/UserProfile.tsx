@@ -1,175 +1,201 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useAuth } from "../../contexts/AuthContext"
-import Modal from "../common/Modal"
-import Input from "../common/Input"
+import { supabase } from "../../lib/supabase"
 import Button from "../common/Button"
+import Input from "../common/Input"
+import Card from "../common/Card"
+import { formatCurrency } from "../../utils"
 
-interface UserProfileProps {
-  isOpen: boolean
-  onClose: () => void
-}
-
-export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
-  const { user, profile, updateProfile, signOut } = useAuth()
+const UserProfile: React.FC = () => {
+  const { user, profile, refreshProfile } = useAuth()
+  const [isEditing, setIsEditing] = useState(false)
   const [fullName, setFullName] = useState(profile?.full_name || "")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
-  const handleUpdateProfile = async (e: React.FormEvent) => {
-    e.preventDefault()
+  useEffect(() => {
+    if (profile) {
+      setFullName(profile.full_name || "")
+    }
+  }, [profile])
+
+  const handleSave = async () => {
+    if (!user) return
+
     setLoading(true)
     setError("")
     setSuccess("")
 
     try {
-      const { error } = await updateProfile({
-        full_name: fullName.trim(),
-      })
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          full_name: fullName.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id)
 
-      if (error) {
-        setError(error.message)
-      } else {
-        setSuccess("Profile updated successfully!")
+      if (updateError) {
+        throw updateError
       }
-    } catch (err) {
-      setError("An unexpected error occurred")
+
+      await refreshProfile()
+      setSuccess("Profile updated successfully!")
+      setIsEditing(false)
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (error: any) {
+      console.error("Error updating profile:", error)
+      setError("Failed to update profile. Please try again.")
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSignOut = async () => {
-    try {
-      await signOut()
-      onClose()
-    } catch (err) {
-      setError("Error signing out")
-    }
+  const handleCancel = () => {
+    setFullName(profile?.full_name || "")
+    setIsEditing(false)
+    setError("")
+    setSuccess("")
   }
 
-  // Safe getters with fallback to 0
-  const gamesPlayed = profile?.games_played || 0
-  const allTimePL = profile?.all_time_profit_loss || 0
-  const biggestWin = profile?.biggest_win || 0
-  const biggestLoss = profile?.biggest_loss || 0
+  const getInitials = (name: string | null, email: string) => {
+    if (name && name.trim()) {
+      return name
+        .trim()
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    }
+    return email.charAt(0).toUpperCase()
+  }
+
+  const getProfitLossColor = (amount: number) => {
+    if (amount > 0) return "text-green-400"
+    if (amount < 0) return "text-red-400"
+    return "text-text-secondary"
+  }
+
+  if (!user || !profile) {
+    return (
+      <div className="container mx-auto p-4">
+        <Card>
+          <p className="text-center text-text-secondary">Loading profile...</p>
+        </Card>
+      </div>
+    )
+  }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="User Profile">
-      <div className="space-y-6">
-        {/* User Info */}
-        <div className="bg-surface-card p-4 rounded-lg">
-          <h3 className="text-lg font-semibold text-text-primary mb-2">Account Information</h3>
-          <p className="text-text-secondary">
-            <strong>Email:</strong> {user?.email}
-          </p>
-          <p className="text-text-secondary">
-            <strong>Account Created:</strong>{" "}
-            {profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "N/A"}
-          </p>
-          {profile?.is_admin && (
-            <p className="text-brand-primary font-semibold">
-              <strong>Admin Account</strong>
-            </p>
-          )}
+    <div className="container mx-auto p-4 max-w-2xl">
+      <Card className="mb-6">
+        <div className="flex items-center space-x-4 mb-6">
+          {/* Avatar Circle with Initials */}
+          <div className="w-16 h-16 bg-brand-primary rounded-full flex items-center justify-center text-white font-bold text-xl">
+            {getInitials(profile.full_name, profile.email)}
+          </div>
+          <div className="flex-1">
+            <h2 className="text-2xl font-bold text-text-primary">{profile.full_name || "Anonymous Player"}</h2>
+            <p className="text-text-secondary">{profile.email}</p>
+            {profile.is_admin && (
+              <span className="inline-block bg-yellow-600 text-white text-xs px-2 py-1 rounded mt-1">Admin</span>
+            )}
+          </div>
         </div>
 
-        {/* All-Time Poker Stats */}
-        <div className="bg-surface-card p-4 rounded-lg border-2 border-green-500">
-          <h3 className="text-lg font-semibold text-green-400 mb-4 flex items-center">
-            <span className="mr-2">🃏</span>
-            All-Time Poker Stats
-          </h3>
+        {success && (
+          <div className="bg-green-900/20 border border-green-600 rounded p-3 mb-4">
+            <p className="text-green-400 text-sm">✅ {success}</p>
+          </div>
+        )}
 
-          {gamesPlayed === 0 ? (
-            <div className="text-center py-4">
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-2xl font-bold text-text-primary">$0.00</div>
-                  <div className="text-sm text-text-secondary">Total P/L</div>
-                </div>
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-2xl font-bold text-brand-primary">0</div>
-                  <div className="text-sm text-text-secondary">Games Played</div>
-                </div>
-              </div>
-              <p className="text-text-secondary">No completed games yet. Start playing to track your stats!</p>
+        {error && (
+          <div className="bg-red-900/20 border border-red-600 rounded p-3 mb-4">
+            <p className="text-red-400 text-sm">❌ {error}</p>
+          </div>
+        )}
+
+        {isEditing ? (
+          <div className="space-y-4">
+            <Input
+              label="Full Name"
+              id="fullName"
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Enter your full name"
+            />
+            <div className="flex space-x-2">
+              <Button onClick={handleSave} disabled={loading} variant="primary">
+                {loading ? "Saving..." : "Save Changes"}
+              </Button>
+              <Button onClick={handleCancel} variant="ghost" disabled={loading}>
+                Cancel
+              </Button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Basic Stats Row */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className={`text-2xl font-bold ${allTimePL >= 0 ? "text-green-400" : "text-red-400"}`}>
-                    ${allTimePL.toFixed(2)}
-                  </div>
-                  <div className="text-sm text-text-secondary">Total P/L</div>
-                </div>
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-2xl font-bold text-brand-primary">{gamesPlayed}</div>
-                  <div className="text-sm text-text-secondary">Games Played</div>
-                </div>
-              </div>
-
-              {/* Win/Loss Records */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-xl font-bold text-green-400">${biggestWin.toFixed(2)}</div>
-                  <div className="text-sm text-text-secondary">Biggest Win</div>
-                </div>
-                <div className="text-center p-3 bg-surface-secondary rounded">
-                  <div className="text-xl font-bold text-red-400">${Math.abs(biggestLoss).toFixed(2)}</div>
-                  <div className="text-sm text-text-secondary">Biggest Loss</div>
-                </div>
-              </div>
-
-              {profile?.last_game_date && (
-                <div className="text-center">
-                  <p className="text-sm text-text-secondary">
-                    Last game: {new Date(profile.last_game_date).toLocaleDateString()}
-                  </p>
-                </div>
-              )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1">Full Name</label>
+              <p className="text-text-primary bg-surface-input p-2 rounded">{profile.full_name || "Not set"}</p>
             </div>
-          )}
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1">Email</label>
+              <p className="text-text-secondary bg-surface-input p-2 rounded">{profile.email}</p>
+            </div>
+            <Button onClick={() => setIsEditing(true)} variant="secondary">
+              Edit Profile
+            </Button>
+          </div>
+        )}
+      </Card>
+
+      {/* All-Time Poker Stats */}
+      <Card className="border-2 border-green-500">
+        <div className="flex items-center space-x-2 mb-4">
+          <span className="text-2xl">🃏</span>
+          <h3 className="text-xl font-semibold text-text-primary">All-Time Poker Stats</h3>
         </div>
 
-        {/* Update Profile Form */}
-        <form onSubmit={handleUpdateProfile} className="space-y-4">
-          <Input
-            label="Full Name"
-            id="fullName"
-            type="text"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            placeholder="Enter your full name"
-          />
-
-          {error && <div className="text-red-500 text-sm bg-red-50 border border-red-200 rounded p-3">{error}</div>}
-
-          {success && (
-            <div className="text-green-500 text-sm bg-green-50 border border-green-200 rounded p-3">{success}</div>
-          )}
-
-          <Button type="submit" variant="primary" disabled={loading} className="w-full">
-            {loading ? "Updating..." : "Update Profile"}
-          </Button>
-        </form>
-
-        {/* Actions */}
-        <div className="flex justify-between pt-4 border-t border-border-default">
-          <Button onClick={onClose} variant="ghost">
-            Close
-          </Button>
-          <Button onClick={handleSignOut} variant="danger">
-            Sign Out
-          </Button>
-        </div>
-      </div>
-    </Modal>
+        {profile.games_played === 0 ? (
+          <div className="text-center py-6">
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="text-center">
+                <p className="text-2xl font-bold text-text-primary">{formatCurrency(0)}</p>
+                <p className="text-sm text-text-secondary">Total P/L</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-text-primary">0</p>
+                <p className="text-sm text-text-secondary">Games Played</p>
+              </div>
+            </div>
+            <p className="text-text-secondary text-sm">🎮 Start playing games to see your statistics here!</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="text-center">
+              <p className={`text-2xl font-bold ${getProfitLossColor(profile.all_time_profit_loss || 0)}`}>
+                {formatCurrency(profile.all_time_profit_loss || 0)}
+              </p>
+              <p className="text-sm text-text-secondary">Total P/L</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-text-primary">{profile.games_played}</p>
+              <p className="text-sm text-text-secondary">Games Played</p>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
   )
 }
+
+export default UserProfile

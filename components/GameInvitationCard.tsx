@@ -116,16 +116,16 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
   }
 
   return (
-    <Card className="mb-3 sm:mb-4 border-blue-500 bg-blue-900/10">
+    <Card className="mb-3 sm:mb-4 border-blue-500 bg-blue-800/80 backdrop-blur-sm">
       <div className="space-y-3">
         <div className="flex items-center space-x-2">
           <span className="text-2xl">🎮</span>
-          <h4 className="text-base sm:text-lg font-semibold text-blue-400 truncate">Game Invitation</h4>
+          <h4 className="text-base sm:text-lg font-semibold text-blue-300 truncate">Game Invitation</h4>
         </div>
 
         <div className="text-xs sm:text-sm text-text-secondary space-y-2">
-          <div className="bg-blue-900/20 border border-blue-600 rounded p-3">
-            <p className="text-blue-200">
+          <div className="bg-blue-700/60 border border-blue-400 rounded p-3">
+            <p className="text-blue-100">
               <strong className="text-white">
                 {invitation.inviter_profile?.full_name || invitation.inviter_profile?.email || "Someone"}
               </strong>{" "}
@@ -136,14 +136,14 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
             </p>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div>
-                <span className="text-blue-300">Game Started:</span>
+                <span className="text-blue-200">Game Started:</span>
                 <br />
                 <span className="text-white">
                   {invitation.game_session?.start_time ? formatDate(invitation.game_session.start_time, false) : "N/A"}
                 </span>
               </div>
               <div>
-                <span className="text-blue-300">Status:</span>
+                <span className="text-blue-200">Status:</span>
                 <br />
                 <span
                   className={`font-semibold ${
@@ -162,14 +162,14 @@ const GameInvitationCard: React.FC<GameInvitationCardProps> = ({ invitation, onI
         </div>
 
         {success && (
-          <div className="bg-green-900/20 border border-green-600 rounded p-3">
-            <p className="text-green-400 text-sm font-semibold">✅ {success}</p>
+          <div className="bg-green-800/60 border border-green-400 rounded p-3">
+            <p className="text-green-300 text-sm font-semibold">✅ {success}</p>
           </div>
         )}
 
         {error && (
-          <div className="bg-red-900/20 border border-red-600 rounded p-3">
-            <p className="text-red-400 text-sm">❌ {error}</p>
+          <div className="bg-red-800/60 border border-red-400 rounded p-3">
+            <p className="text-red-300 text-sm">❌ {error}</p>
           </div>
         )}
 
