@@ -604,30 +604,11 @@ export default function ActiveGameScreen({
       }
     }
 
-    console.log("[v0] Finalizing game with comprehensive player tracking...")
-    console.log(
-      "[v0] Players being finalized:",
-      session.playersInGame.map((p) => ({
-        name: p.name,
-        playerId: p.playerId,
-        status: p.status,
-        isLocal: p.playerId.startsWith("local-"),
-      })),
-    )
-
     // Update all active players with their final point counts
     const updatedPlayersInGame = session.playersInGame.map((player) => {
       if (player.status === "active") {
         const finalPoints = Number.parseFloat(finalPointInputs[player.playerId])
         const cashOutAmount = finalPoints * session.pointToCashRate
-
-        console.log(`[v0] Finalizing player ${player.name}:`, {
-          playerId: player.playerId,
-          finalPoints,
-          cashOutAmount,
-          isFloatingPlayer: player.playerId.startsWith("local-"),
-        })
-
         return {
           ...player,
           pointStack: finalPoints,
@@ -645,13 +626,6 @@ export default function ActiveGameScreen({
       endTime: new Date().toISOString(),
       currentPhysicalPointsOnTable: 0,
     }
-
-    console.log("[v0] Finalized session ready for comprehensive tracking:", {
-      gameId: finalizedSession.id,
-      totalPlayers: finalizedSession.playersInGame.length,
-      floatingPlayers: finalizedSession.playersInGame.filter((p) => p.playerId.startsWith("local-")).length,
-      accountPlayers: finalizedSession.playersInGame.filter((p) => !p.playerId.startsWith("local-")).length,
-    })
 
     onEndGame(finalizedSession)
     setShowFinalizeGameModal(false)
@@ -739,10 +713,11 @@ export default function ActiveGameScreen({
 
     setLoadingFriendsOld(true)
     try {
+      // Get friendships
       const { data: friendsData, error } = await supabase
         .from("friendships")
         .select("id, user_id, friend_id, created_at")
-        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+        .eq("user_id", user.id)
 
       if (error) {
         console.error("Error loading friendships:", error)
@@ -755,7 +730,8 @@ export default function ActiveGameScreen({
         return
       }
 
-      const friendIds = friendsData.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id))
+      // Get friend profiles
+      const friendIds = friendsData.map((f) => f.friend_id)
       const { data: profilesData, error: profilesError } = await supabase
         .from("profiles")
         .select("id, full_name, email")
@@ -767,14 +743,11 @@ export default function ActiveGameScreen({
         return
       }
 
-      const friendsWithProfiles = friendsData.map((friendship) => {
-        const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
-        return {
-          ...friendship,
-          friend_id: friendId,
-          friend_profile: profilesData?.find((p) => p.id === friendId),
-        }
-      })
+      // Combine the data
+      const friendsWithProfiles = friendsData.map((friendship) => ({
+        ...friendship,
+        friend_profile: profilesData?.find((p) => p.id === friendship.friend_id),
+      }))
 
       setFriendsOld(friendsWithProfiles)
     } catch (error) {
@@ -785,72 +758,79 @@ export default function ActiveGameScreen({
     }
   }
 
+  // Load friend relationships for players in the game
   const loadFriendRelationships = async () => {
     if (!user) return
 
     try {
-      const playerIds = session.playersInGame.map((p) => p.playerId).filter(Boolean)
-      if (playerIds.length === 0) return
+      // Get all player names from the game
+      const playerNames = session.playersInGame.map((p) => p.name)
 
+      // Get profiles for all players in the game (excluding current user)
+      const { data: playerProfiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("full_name", playerNames)
+        .neq("id", user.id)
+
+      if (profilesError || !playerProfiles) {
+        console.error("Error loading player profiles:", profilesError)
+        return
+      }
+
+      // Check existing friendships
+      const playerIds = playerProfiles.map((p) => p.id)
       const { data: friendships, error: friendshipsError } = await supabase
         .from("friendships")
-        .select("friend_id, user_id")
-        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
-        .in("friend_id", playerIds.concat(playerIds.map(() => user.id)))
+        .select("friend_id")
+        .eq("user_id", user.id)
+        .in("friend_id", playerIds)
 
       if (friendshipsError) {
         console.error("Error loading friendships:", friendshipsError)
         return
       }
 
-      // Extract friend IDs considering bidirectional relationships
-      const friendIds = new Set<string>()
-      friendships?.forEach((f) => {
-        if (f.user_id === user.id) {
-          friendIds.add(f.friend_id)
-        } else if (f.friend_id === user.id) {
-          friendIds.add(f.user_id)
-        }
-      })
-
-      // Load pending friend requests
-      const { data: requests, error: requestsError } = await supabase
+      // Check pending friend requests (both sent and received)
+      const { data: pendingRequests, error: requestsError } = await supabase
         .from("friend_requests")
         .select("sender_id, receiver_id")
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .eq("status", "pending")
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .in("sender_id", [...playerIds, user.id])
+        .in("receiver_id", [...playerIds, user.id])
 
       if (requestsError) {
         console.error("Error loading friend requests:", requestsError)
         return
       }
 
-      const pendingRequestIds = new Set<string>()
-      requests?.forEach((r) => {
-        if (r.sender_id === user.id) {
-          pendingRequestIds.add(r.receiver_id)
-        } else if (r.receiver_id === user.id) {
-          pendingRequestIds.add(r.sender_id)
-        }
-      })
+      // Build friend request states
+      const states: Record<string, "none" | "pending" | "friends"> = {}
+      const playersWithProfiles = new Set(playerProfiles.map((p) => p.full_name || ""))
 
-      // Update friend request states for all players
-      const newStates: Record<string, "none" | "pending" | "friends"> = {}
-      session.playersInGame.forEach((player) => {
-        if (player.playerId === user.id) {
-          newStates[player.name] = "friends" // Self
-        } else if (friendIds.has(player.playerId)) {
-          newStates[player.name] = "friends"
-        } else if (pendingRequestIds.has(player.playerId)) {
-          newStates[player.name] = "pending"
+      for (const profile of playerProfiles) {
+        const isFriend = friendships?.some((f) => f.friend_id === profile.id)
+        const hasPendingRequest = pendingRequests?.some(
+          (r) =>
+            (r.sender_id === user.id && r.receiver_id === profile.id) ||
+            (r.sender_id === profile.id && r.receiver_id === user.id),
+        )
+
+        if (isFriend) {
+          states[profile.full_name || ""] = "friends"
+        } else if (hasPendingRequest) {
+          states[profile.full_name || ""] = "pending"
         } else {
-          newStates[player.name] = "none"
+          states[profile.full_name || ""] = "none"
         }
-      })
+      }
 
-      setFriendRequestStates(newStates)
+      // Set a new state to track which players have profiles
+      setPlayersWithProfiles(playersWithProfiles)
+      setFriendRequestStates(states)
     } catch (error) {
-      console.error("Error in loadFriendRelationships:", error)
+      console.error("Error loading friend relationships:", error)
     }
   }
 
@@ -963,7 +943,7 @@ export default function ActiveGameScreen({
         invitedUsers: updatedInvitedUsers,
       }
 
-      // CRITICAL FIX: Call onUpdateSession to propagate changes to parent component component
+      // CRITICAL FIX: Call onUpdateSession to propagate changes to parent component
       onUpdateSession(updatedSession)
 
       console.log("Local session state updated successfully")
@@ -1025,63 +1005,31 @@ export default function ActiveGameScreen({
   }
 
   const handleAddPlayerToGame = () => {
-    console.log("[v0] Adding player to game:", newPlayerNameInModal)
-
     if (!newPlayerNameInModal.trim()) {
-      console.log("[v0] Empty player name provided")
+      setFormError("Player name cannot be empty.")
       return
     }
 
-    try {
-      const existingPlayer = session.playersInGame.find(
-        (p) => p.name.toLowerCase() === newPlayerNameInModal.trim().toLowerCase(),
-      )
+    const existingPlayerInGame = session.playersInGame.find(
+      (p) => p.name.toLowerCase() === newPlayerNameInModal.trim().toLowerCase(),
+    )
 
-      if (existingPlayer) {
-        console.log("[v0] Player already exists in game:", newPlayerNameInModal)
-        alert("A player with this name is already in the game.")
-        return
-      }
-
-      const newPlayer = onAddNewPlayerGlobally(newPlayerNameInModal.trim())
-      if (!newPlayer) {
-        console.log("[v0] Failed to create new player globally")
-        alert("Failed to add player. Please try again.")
-        return
-      }
-
-      const pointsFromBuyIn = Math.floor(session.standardBuyInAmount / session.pointToCashRate)
-
-      const newPlayerInGame: PlayerInGame = {
-        playerId: newPlayer.id,
-        name: newPlayer.name,
-        pointStack: pointsFromBuyIn,
-        buyIns: [
-          {
-            logId: generateLogId(),
-            amount: session.standardBuyInAmount,
-            time: new Date().toISOString(),
-          },
-        ],
-        cashOutAmount: 0,
-        cashOutLog: [],
-        status: "active",
-      }
-
-      const updatedSession = {
-        ...session,
-        playersInGame: [...session.playersInGame, newPlayerInGame],
-        currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + pointsFromBuyIn,
-      }
-
-      console.log("[v0] Player added successfully:", newPlayer.name)
-      onUpdateSession(updatedSession)
-      setNewPlayerNameInModal("")
-      setIsAddPlayerModalOpen(false)
-    } catch (error) {
-      console.error("[v0] Error adding player to game:", error)
-      alert("Failed to add player. Please try again.")
+    if (existingPlayerInGame) {
+      setFormError("A player with this name already exists in this game.")
+      return
     }
+
+    const newPlayerInGame = createPlayerWithBuyIn(newPlayerNameInModal.trim())
+
+    onUpdateSession({
+      ...session,
+      playersInGame: [...session.playersInGame, newPlayerInGame],
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + newPlayerInGame.pointStack,
+    })
+
+    setIsAddPlayerModalOpen(false)
+    setNewPlayerNameInModal("")
+    setFormError("")
   }
 
   const openBuyInModal = (playerId: string) => {
@@ -1092,59 +1040,38 @@ export default function ActiveGameScreen({
   }
 
   const handleBuyInOld = () => {
-    console.log("[v0] Starting buy-in process for player:", buyInPlayerId, "amount:", buyInAmountOld)
-
     if (!buyInPlayerId || buyInAmountOld <= 0) {
       setFormError("Invalid buy-in amount.")
       return
     }
-
     const player = session.playersInGame.find((p) => p.playerId === buyInPlayerId)
     if (!player || player.status === "cashed_out_early") {
       setFormError("Player not found or has already cashed out.")
       return
     }
-
     if (session.status === "pending_close" || session.status === "completed") {
       setFormError("Cannot add buy-ins to a game that is closing or completed.")
       return
     }
+    const pointsToAdd = Math.floor(buyInAmountOld / session.pointToCashRate)
 
-    try {
-      const pointsToAdd = Math.floor(buyInAmountOld / session.pointToCashRate)
-      console.log("[v0] Calculated points to add:", pointsToAdd)
-
-      const newBuyIn = {
-        logId: generateLogId(),
-        amount: buyInAmountOld,
-        time: new Date().toISOString(),
-      }
-
-      const updatedSession = {
-        ...session,
-        playersInGame: session.playersInGame.map((p) =>
-          p.playerId === buyInPlayerId
-            ? {
-                ...p,
-                pointStack: p.pointStack + pointsToAdd,
-                buyIns: [...p.buyIns, newBuyIn],
-              }
-            : p,
-        ),
-        currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + pointsToAdd,
-      }
-
-      console.log("[v0] Buy-in successful, updating session")
-      onUpdateSession(updatedSession)
-      setIsBuyInModalOpen(false)
-      setBuyInPlayerId(null)
-      setFormError("")
-
-      console.log("[v0] Buy-in completed successfully for", player.name)
-    } catch (error) {
-      console.error("[v0] Error processing buy-in:", error)
-      setFormError("Failed to process buy-in. Please try again.")
+    const updatedSession = {
+      ...session,
+      playersInGame: session.playersInGame.map((p) =>
+        p.playerId === buyInPlayerId
+          ? {
+              ...p,
+              pointStack: p.pointStack + pointsToAdd,
+              buyIns: [...p.buyIns, { logId: generateLogId(), amount: buyInAmountOld, time: new Date().toISOString() }],
+            }
+          : p,
+      ),
+      currentPhysicalPointsOnTable: session.currentPhysicalPointsOnTable + pointsToAdd,
     }
+    onUpdateSession(updatedSession)
+    setIsBuyInModalOpen(false)
+    setBuyInPlayerId(null)
+    setFormError("")
   }
 
   // Edit Buy-in Functions
@@ -1362,8 +1289,6 @@ export default function ActiveGameScreen({
       return
     }
 
-    console.log("[v0] Using old finalization method with comprehensive tracking...")
-
     // Create final cash-out records for all active players
     const updatedPlayersInGame = session.playersInGame.map((player) => {
       const finalInput = finalPointInputsOld.find((input) => input.playerId === player.playerId)
@@ -1371,13 +1296,6 @@ export default function ActiveGameScreen({
       if (finalInput && player.status === "active") {
         const finalPoints = Number.parseInt(finalInput.points, 10) || 0
         const finalCashValue = finalPoints * session.pointToCashRate
-
-        console.log(`[v0] Old method finalizing player ${player.name}:`, {
-          playerId: player.playerId,
-          finalPoints,
-          finalCashValue,
-          isFloatingPlayer: player.playerId.startsWith("local-"),
-        })
 
         const finalCashOutRecord: CashOutLogRecord = {
           logId: generateLogId(),
@@ -1406,12 +1324,6 @@ export default function ActiveGameScreen({
       endTime: new Date().toISOString(),
       currentPhysicalPointsOnTable: 0,
     }
-
-    console.log("[v0] Old method finalized session ready:", {
-      gameId: finalizedSession.id,
-      totalPlayers: finalizedSession.playersInGame.length,
-      floatingPlayers: finalizedSession.playersInGame.filter((p) => p.playerId.startsWith("local-")).length,
-    })
 
     onEndGame(finalizedSession)
     setIsFinalizeResultsModalOpen(false)
@@ -1700,9 +1612,8 @@ export default function ActiveGameScreen({
           </Card>
         )}
 
-      <div className="space-y-3 sm:space-y-4">
-        {/* Active Players */}
-        {gameStateInfo.activePlayers.map((p) => {
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+        {session.playersInGame.map((p) => {
           const participant = participantInfo.find((info) => info.playerId === p.playerId)
           return (
             <PlayerGameCard
@@ -1725,38 +1636,6 @@ export default function ActiveGameScreen({
             />
           )
         })}
-
-        {/* Cashed Out Players - Moved to bottom */}
-        {gameStateInfo.hasCashedOutPlayers && (
-          <>
-            <div className="border-t border-gray-600 pt-4 mt-6">
-              <h4 className="text-sm font-medium text-gray-400 mb-3">Cashed Out Players</h4>
-            </div>
-            {gameStateInfo.cashedOutPlayers.map((p) => {
-              const participant = participantInfo.find((info) => info.playerId === p.playerId)
-              return (
-                <PlayerGameCard
-                  key={p.playerId}
-                  playerInGame={p}
-                  pointRate={session.pointToCashRate}
-                  onBuyIn={() => openBuyInModal(p.playerId)}
-                  onCashOut={() => openCashOutModal(p.playerId)}
-                  onEditBuyIn={(buyInLogId) => openEditBuyInModal(p.playerId, buyInLogId)}
-                  onDeleteBuyIn={(buyInLogId) => openDeleteBuyInModal(p.playerId, buyInLogId)}
-                  gameStatus={session.status}
-                  currentPhysicalPointsOnTable={session.currentPhysicalPointsOnTable}
-                  isGameOwner={isGameOwner}
-                  currentUserId={user?.id}
-                  friendRequestState={friendRequestStates[p.name]}
-                  onSendFriendRequest={() => handleSendFriendRequest(p.name)}
-                  isLoadingFriendRequest={loadingFriendRequests[p.name]}
-                  hasUserProfile={participant?.isRegisteredUser || false}
-                  participantInfo={participant}
-                />
-              )
-            })}
-          </>
-        )}
       </div>
 
       {/* Debug Modal */}

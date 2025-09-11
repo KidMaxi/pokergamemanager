@@ -26,7 +26,6 @@ const FriendsPage: React.FC = () => {
 
   const loadFriendsData = useCallback(async () => {
     if (!user) {
-      console.log("[v0] No user found, skipping friends data load")
       setLoading(false)
       return
     }
@@ -34,7 +33,7 @@ const FriendsPage: React.FC = () => {
     try {
       setLoading(true)
       setError("")
-      console.log("[v0] Loading friends data for user:", user.id)
+      console.log("Loading friends data...")
 
       // Initialize arrays
       let friendsWithProfiles: Friendship[] = []
@@ -42,60 +41,44 @@ const FriendsPage: React.FC = () => {
       let receivedWithProfiles: FriendRequest[] = []
 
       try {
-        console.log("[v0] Fetching friendships...")
+        // Load friends with profile data
         const { data: friendsData, error: friendsError } = await supabase
           .from("friendships")
           .select("*")
-          .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
-
-        console.log("[v0] Friendships query result:", { friendsData, friendsError })
+          .eq("user_id", user.id)
 
         if (friendsError) {
-          console.error("[v0] Error loading friends:", friendsError)
+          console.error("Error loading friends:", friendsError)
           // Don't throw here, just log and continue
         } else if (friendsData && friendsData.length > 0) {
-          console.log("[v0] Found", friendsData.length, "friendships")
-          const friendIds = friendsData.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id))
-          console.log("[v0] Fetching profiles for friend IDs:", friendIds)
+          // Get friend profiles
+          const friendIds = friendsData.map((f) => f.friend_id)
 
           const { data: profilesData, error: profilesError } = await supabase
             .from("profiles")
             .select("id, full_name, email, all_time_profit_loss, games_played")
             .in("id", friendIds)
 
-          console.log("[v0] Profiles query result:", { profilesData, profilesError })
-
           if (!profilesError && profilesData) {
-            friendsWithProfiles = friendsData.map((friendship) => {
-              const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
-              return {
-                ...friendship,
-                friend_id: friendId, // Normalize the friend_id
-                friend_profile: profilesData.find((p) => p.id === friendId),
-              }
-            })
-            console.log("[v0] Mapped friends with profiles:", friendsWithProfiles)
+            friendsWithProfiles = friendsData.map((friendship) => ({
+              ...friendship,
+              friend_profile: profilesData.find((p) => p.id === friendship.friend_id),
+            }))
           }
-        } else {
-          console.log("[v0] No friendships found for user")
         }
       } catch (err) {
-        console.error("[v0] Error in friends loading:", err)
+        console.error("Error in friends loading:", err)
       }
 
       try {
         // Load sent requests (only pending ones)
-        console.log("[v0] Fetching sent requests...")
         const { data: sentData, error: sentError } = await supabase
           .from("friend_requests")
           .select("*")
           .eq("sender_id", user.id)
           .eq("status", "pending")
 
-        console.log("[v0] Sent requests query result:", { sentData, sentError })
-
         if (!sentError && sentData && sentData.length > 0) {
-          console.log("[v0] Found", sentData.length, "sent requests")
           // Get receiver profiles for sent requests
           const receiverIds = sentData.map((r) => r.receiver_id)
 
@@ -109,28 +92,21 @@ const FriendsPage: React.FC = () => {
               ...request,
               receiver_profile: receiverProfiles.find((p) => p.id === request.receiver_id),
             }))
-            console.log("[v0] Mapped sent requests with profiles:", sentWithProfiles)
           }
-        } else {
-          console.log("[v0] No sent requests found")
         }
       } catch (err) {
-        console.error("[v0] Error in sent requests loading:", err)
+        console.error("Error in sent requests loading:", err)
       }
 
       try {
         // Load received requests (only pending ones)
-        console.log("[v0] Fetching received requests...")
         const { data: receivedData, error: receivedError } = await supabase
           .from("friend_requests")
           .select("*")
           .eq("receiver_id", user.id)
           .eq("status", "pending")
 
-        console.log("[v0] Received requests query result:", { receivedData, receivedError })
-
         if (!receivedError && receivedData && receivedData.length > 0) {
-          console.log("[v0] Found", receivedData.length, "received requests")
           // Get sender profiles for received requests
           const senderIds = receivedData.map((r) => r.sender_id)
 
@@ -144,31 +120,20 @@ const FriendsPage: React.FC = () => {
               ...request,
               sender_profile: senderProfiles.find((p) => p.id === request.sender_id),
             }))
-            console.log("[v0] Mapped received requests with profiles:", receivedWithProfiles)
           }
-        } else {
-          console.log("[v0] No received requests found")
         }
       } catch (err) {
-        console.error("[v0] Error in received requests loading:", err)
+        console.error("Error in received requests loading:", err)
       }
 
       // Update state with loaded data
-      console.log(
-        "[v0] Final data counts - Friends:",
-        friendsWithProfiles.length,
-        "Sent:",
-        sentWithProfiles.length,
-        "Received:",
-        receivedWithProfiles.length,
-      )
       setFriends(friendsWithProfiles)
       setSentRequests(sentWithProfiles)
       setReceivedRequests(receivedWithProfiles)
 
-      console.log("[v0] Friends data loaded successfully")
+      console.log("Friends data loaded successfully")
     } catch (error) {
-      console.error("[v0] Error in loadFriendsData:", error)
+      console.error("Error in loadFriendsData:", error)
       setError("Failed to load friends data. Please try refreshing the page.")
     } finally {
       setLoading(false)
@@ -200,60 +165,17 @@ const FriendsPage: React.FC = () => {
     setSuccess("")
 
     try {
-      console.log("[v0] Starting friend request process...")
-      console.log("[v0] Current user:", { id: user.id, email: user.email })
-      console.log("[v0] Searching for email:", friendEmail.trim())
-
-      const searchEmail = friendEmail.trim().toLowerCase()
-      console.log("[v0] Normalized search email:", searchEmail)
-
-      // Use a more robust search approach
-      const { data: targetUsers, error: userError } = await supabase
+      // First, find the user by email
+      const { data: targetUser, error: userError } = await supabase
         .from("profiles")
         .select("id, email, full_name")
-        .ilike("email", searchEmail) // Use case-insensitive search
-        .limit(5) // Limit results to prevent large responses
+        .eq("email", friendEmail.trim().toLowerCase())
+        .single()
 
-      console.log("[v0] User search result:", {
-        targetUsers,
-        userError,
-        searchEmail,
-        resultCount: targetUsers?.length || 0,
-      })
-
-      if (userError) {
-        console.error("[v0] Database error during user search:", userError)
-        if (userError.code === "PGRST301") {
-          setError("Database access denied. Please ensure you're logged in and try again.")
-        } else if (userError.code === "PGRST116") {
-          setError("Database query error. Please try again or contact support.")
-        } else {
-          setError(`Search failed: ${userError.message}`)
-        }
+      if (userError || !targetUser) {
+        setError("User not found with that email address")
         return
       }
-
-      if (!targetUsers || targetUsers.length === 0) {
-        console.log("[v0] No users found with email:", searchEmail)
-        setError(
-          `No user found with email "${friendEmail}". Please check the email address and ensure they have an account.`,
-        )
-        return
-      }
-
-      // Find exact match (case-insensitive)
-      const exactMatch = targetUsers.find((u) => u.email.toLowerCase() === searchEmail)
-      if (!exactMatch) {
-        const suggestions = targetUsers
-          .slice(0, 3)
-          .map((u) => u.email)
-          .join(", ")
-        setError(`No exact match found for "${friendEmail}". Did you mean: ${suggestions}?`)
-        return
-      }
-
-      const targetUser = exactMatch
-      console.log("[v0] Found target user:", targetUser)
 
       if (targetUser.id === user.id) {
         setError("You cannot send a friend request to yourself")
@@ -261,54 +183,33 @@ const FriendsPage: React.FC = () => {
       }
 
       // Check if already friends
-      const { data: existingFriendship, error: friendshipError } = await supabase
+      const { data: existingFriendship } = await supabase
         .from("friendships")
         .select("id")
-        .or(
-          `and(user_id.eq.${user.id},friend_id.eq.${targetUser.id}),and(user_id.eq.${targetUser.id},friend_id.eq.${user.id})`,
-        )
-        .maybeSingle() // Use maybeSingle instead of single to avoid errors when no rows found
-
-      if (friendshipError) {
-        console.error("[v0] Error checking existing friendship:", friendshipError)
-        setError("Failed to check friendship status. Please try again.")
-        return
-      }
+        .eq("user_id", user.id)
+        .eq("friend_id", targetUser.id)
+        .single()
 
       if (existingFriendship) {
-        setError(`You are already friends with ${targetUser.full_name || targetUser.email}`)
+        setError("You are already friends with this user")
         return
       }
 
-      // Check if request already exists
-      const { data: existingRequest, error: requestCheckError } = await supabase
+      // Check if request already exists (only pending ones exist now)
+      const { data: existingRequest } = await supabase
         .from("friend_requests")
-        .select("id, status, sender_id, receiver_id")
+        .select("id, status")
         .or(
           `and(sender_id.eq.${user.id},receiver_id.eq.${targetUser.id}),and(sender_id.eq.${targetUser.id},receiver_id.eq.${user.id})`,
         )
-        .eq("status", "pending")
-        .maybeSingle()
-
-      if (requestCheckError) {
-        console.error("[v0] Error checking existing request:", requestCheckError)
-        setError("Failed to check request status. Please try again.")
-        return
-      }
+        .single()
 
       if (existingRequest) {
-        if (existingRequest.sender_id === user.id) {
-          setError(`You already sent a friend request to ${targetUser.full_name || targetUser.email}`)
-        } else {
-          setError(
-            `${targetUser.full_name || targetUser.email} has already sent you a friend request. Check your received requests.`,
-          )
-        }
+        setError("A friend request is already pending with this user")
         return
       }
 
       // Send friend request
-      console.log("[v0] Sending friend request...")
       const { error: requestError } = await supabase.from("friend_requests").insert({
         sender_id: user.id,
         receiver_id: targetUser.id,
@@ -316,24 +217,16 @@ const FriendsPage: React.FC = () => {
       })
 
       if (requestError) {
-        console.error("[v0] Error inserting friend request:", requestError)
-        if (requestError.code === "23505") {
-          // Unique constraint violation
-          setError("A friend request is already pending with this user")
-        } else {
-          setError(`Failed to send friend request: ${requestError.message}`)
-        }
-        return
+        throw requestError
       }
 
-      console.log("[v0] Friend request sent successfully")
       setSuccess(`Friend request sent to ${targetUser.full_name || targetUser.email}!`)
       setFriendEmail("")
       setShowAddFriendModal(false)
       loadFriendsData() // Refresh data
     } catch (error: any) {
-      console.error("[v0] Unexpected error sending friend request:", error)
-      setError("An unexpected error occurred. Please try again.")
+      console.error("Error sending friend request:", error)
+      setError("Failed to send friend request")
     } finally {
       setAddFriendLoading(false)
     }
@@ -342,120 +235,38 @@ const FriendsPage: React.FC = () => {
   const handleAcceptRequest = async (requestId: string) => {
     try {
       setError("")
-      console.log("[v0] Attempting to accept friend request:", requestId)
-
-      console.log("[v0] Current user ID:", user?.id)
-      console.log("[v0] Request ID to accept:", requestId)
-
-      // First, let's check if the request exists and get its details
-      const { data: requestDetails, error: requestCheckError } = await supabase
-        .from("friend_requests")
-        .select("*")
-        .eq("id", requestId)
-        .eq("receiver_id", user?.id)
-        .eq("status", "pending")
-        .single()
-
-      console.log("[v0] Request details before acceptance:", { requestDetails, requestCheckError })
-
-      if (requestCheckError || !requestDetails) {
-        console.error("[v0] Request not found or not accessible:", requestCheckError)
-        setError("Friend request not found or you don't have permission to accept it.")
-        return
-      }
-
-      const { data, error } = await supabase.rpc("accept_friend_request", {
+      const { error } = await supabase.rpc("accept_friend_request", {
         request_id: requestId,
       })
 
-      console.log("[v0] Accept friend request RPC result:", { data, error })
-
       if (error) {
-        console.error("[v0] RPC error accepting friend request:", error)
-        if (error.code === "42883") {
-          setError("Friend request function not available. Please contact support.")
-        } else if (error.message.includes("permission denied")) {
-          setError("You don't have permission to accept this request.")
-        } else {
-          setError(`Failed to accept friend request: ${error.message}`)
-        }
-        return
+        throw error
       }
 
-      console.log("[v0] Verifying request was accepted...")
-
-      // Check if the request status was updated
-      const { data: updatedRequest, error: verifyError } = await supabase
-        .from("friend_requests")
-        .select("status")
-        .eq("id", requestId)
-        .single()
-
-      console.log("[v0] Request status after acceptance:", { updatedRequest, verifyError })
-
-      // Check if friendship was created
-      const { data: newFriendship, error: friendshipError } = await supabase
-        .from("friendships")
-        .select("*")
-        .or(
-          `and(user_id.eq.${user?.id},friend_id.eq.${requestDetails.sender_id}),and(user_id.eq.${requestDetails.sender_id},friend_id.eq.${user?.id})`,
-        )
-        .maybeSingle()
-
-      console.log("[v0] Friendship created:", { newFriendship, friendshipError })
-
-      if (!updatedRequest || updatedRequest.status !== "accepted") {
-        console.error("[v0] Request status was not updated to accepted")
-        setError("Failed to update request status. Please try again.")
-        return
-      }
-
-      if (!newFriendship) {
-        console.error("[v0] Friendship was not created")
-        setError("Request was accepted but friendship was not created. Please contact support.")
-        return
-      }
-
-      // Check if the function returned an error in the data
-      if (data && typeof data === "object" && !data.success) {
-        console.error("[v0] Function returned error:", data.error)
-        setError(data.error || "Failed to accept friend request")
-        return
-      }
-
-      console.log("[v0] Friend request accepted successfully")
-      setSuccess("Friend request accepted! You are now friends.")
-
-      setTimeout(() => {
-        loadFriendsData() // Refresh data
-      }, 500)
+      setSuccess("Friend request accepted!")
+      loadFriendsData() // Refresh data
     } catch (error: any) {
-      console.error("[v0] Unexpected error accepting request:", error)
-      setError("An unexpected error occurred. Please try again.")
+      console.error("Error accepting request:", error)
+      setError("Failed to accept friend request")
     }
   }
 
   const handleDeclineRequest = async (requestId: string) => {
     try {
       setError("")
-      console.log("[v0] Declining friend request:", requestId)
-
       const { error } = await supabase
         .from("friend_requests")
         .update({ status: "declined", updated_at: new Date().toISOString() })
         .eq("id", requestId)
 
       if (error) {
-        console.error("[v0] Error declining request:", error)
-        setError(`Failed to decline friend request: ${error.message}`)
-        return
+        throw error
       }
 
-      console.log("[v0] Friend request declined successfully")
       setSuccess("Friend request declined")
       loadFriendsData() // Refresh data
     } catch (error: any) {
-      console.error("[v0] Unexpected error declining request:", error)
+      console.error("Error declining request:", error)
       setError("Failed to decline friend request")
     }
   }
@@ -465,37 +276,19 @@ const FriendsPage: React.FC = () => {
 
     try {
       setError("")
-      console.log("[v0] Removing friend:", friendId)
-
-      const { data, error } = await supabase.rpc("remove_friendship", {
+      const { error } = await supabase.rpc("remove_friendship", {
         friend_user_id: friendId,
       })
 
-      console.log("[v0] Remove friendship result:", { data, error })
-
       if (error) {
-        console.error("[v0] RPC error removing friend:", error)
-        if (error.code === "42883") {
-          setError("Friend removal function not available. Please contact support.")
-        } else {
-          setError(`Failed to remove friend: ${error.message}`)
-        }
-        return
+        throw error
       }
 
-      // Check if the function returned an error in the data
-      if (data && typeof data === "object" && !data.success) {
-        console.error("[v0] Function returned error:", data.error)
-        setError(data.error || "Failed to remove friend")
-        return
-      }
-
-      console.log("[v0] Friend removed successfully")
-      setSuccess("Friend removed successfully")
+      setSuccess("Friend removed")
       loadFriendsData() // Refresh data
     } catch (error: any) {
-      console.error("[v0] Unexpected error removing friend:", error)
-      setError("Failed to remove friend. Please try again.")
+      console.error("Error removing friend:", error)
+      setError("Failed to remove friend")
     }
   }
 

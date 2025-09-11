@@ -26,7 +26,6 @@ import GameStateDebugPanel from "../components/debug/GameStateDebugPanel"
 import FriendsFeatureTestResults from "../components/debug/FriendsFeatureTestResults"
 import InvitationDiagnostics from "../components/debug/InvitationDiagnostics"
 import GameInviteSystemAnalysis from "../components/analysis/GameInviteSystemAnalysis"
-import { finalizeGameWithComprehensiveTracking } from "../lib/finalize"
 
 export default function Home() {
   const { user, loading: authLoading, emailVerified } = useAuth()
@@ -66,8 +65,6 @@ export default function Home() {
       setLoading(true)
       console.log("🔄 Loading user data for:", user!.id)
 
-      console.log("[v0] Starting loadUserData for user:", user!.id)
-
       // Load games created by the user
       let sessionsData
       let sessionsError
@@ -83,10 +80,6 @@ export default function Home() {
         sessionsData = result.data
         sessionsError = result.error
         console.log("✅ Loaded owned games:", sessionsData?.length || 0)
-        console.log(
-          "[v0] Owned games loaded:",
-          sessionsData?.map((g) => ({ id: g.id, name: g.name, user_id: g.user_id })),
-        )
       } catch (error) {
         console.log("invited_users column doesn't exist yet, falling back to basic query")
 
@@ -110,13 +103,10 @@ export default function Home() {
       let invitedGamesData = []
       try {
         console.log("🔍 Loading invited games...")
-        console.log("[v0] Querying game_invitations for user:", user!.id, "with status: accepted")
-
         const { data: acceptedInvitations, error: invitationsError } = await supabase
           .from("game_invitations")
           .select(`
           game_session_id,
-          status,
           game_session:game_sessions(
             id, name, start_time, end_time, status, point_to_cash_rate, players_data, invited_users, user_id
           )
@@ -124,19 +114,12 @@ export default function Home() {
           .eq("invitee_id", user!.id)
           .eq("status", "accepted")
 
-        console.log("[v0] Raw invitation query result:", { acceptedInvitations, invitationsError })
-
         if (!invitationsError && acceptedInvitations) {
           invitedGamesData = acceptedInvitations.filter((inv) => inv.game_session).map((inv) => inv.game_session)
           console.log("✅ Loaded invited games:", invitedGamesData.length)
-          console.log(
-            "[v0] Invited games loaded:",
-            invitedGamesData.map((g) => ({ id: g.id, name: g.name, user_id: g.user_id })),
-          )
         }
       } catch (error) {
         console.log("Game invitations not available yet, skipping invited games")
-        console.log("[v0] Invitation loading error:", error)
       }
 
       // Combine owned games and invited games, removing duplicates
@@ -160,16 +143,6 @@ export default function Home() {
         invited: invitedGamesData.length,
         combined: combinedSessions.length,
       })
-
-      console.log(
-        "[v0] Final combined games:",
-        combinedSessions.map((g) => ({
-          id: g.id,
-          name: g.name,
-          user_id: g.user_id,
-          isOwner: g.isOwner,
-        })),
-      )
 
       // Transform database data to match our types with enhanced validation
       const transformedSessions: GameSession[] = combinedSessions.map((session) => {
@@ -519,7 +492,6 @@ export default function Home() {
       ...session,
       currentPhysicalPointsOnTable: 0,
       playersInGame: [],
-      invitedUsers: [], // Start with empty array, users will be added when they accept
     }
 
     // Automatically add the current user as a player with standard buy-in
@@ -602,20 +574,10 @@ export default function Home() {
     }
 
     try {
-      console.log("[v0] Starting comprehensive game finalization...")
-
-      // First update the session in database
       await updateGameSessionInDatabase(completedSession)
 
-      // Then use the new comprehensive finalization function
-      const finalizationResult = await finalizeGameWithComprehensiveTracking(completedSession)
-
-      if (finalizationResult.success) {
-        console.log("[v0] Comprehensive finalization successful:", finalizationResult.message)
-      } else {
-        console.error("[v0] Finalization failed:", finalizationResult.error)
-        // Still continue with local state update even if finalization fails
-      }
+      // Update stats for all participants (host + invited users)
+      await updateUserStatsAfterGameCompletion(completedSession)
 
       setGameSessions((prevSessions) => {
         return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
