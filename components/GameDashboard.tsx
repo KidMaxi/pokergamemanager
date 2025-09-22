@@ -168,14 +168,12 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
       const CACHE_DURATION = 2 * 60 * 1000 // 2 minutes
 
       if (!forceRefresh && now - lastInvitationsFetch < CACHE_DURATION) {
-        console.log("[v0] Using cached invitation data")
         return
       }
 
       try {
         setLoadingInvitations(true)
         setError(null)
-        console.log("[v0] Fetching pending invitations for user:", user.id)
 
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error("Invitations fetch timeout")), 10000),
@@ -199,7 +197,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
           setError("Failed to load game invitations")
           setPendingInvitations([])
         } else {
-          console.log("[v0] Fetched pending invitations:", data?.length || 0)
           setPendingInvitations(data || [])
           setLastInvitationsFetch(now)
         }
@@ -222,14 +219,11 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
       const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
       if (!forceRefresh && now - lastFriendsFetch < CACHE_DURATION) {
-        console.log("[v0] Using cached friends data")
         return
       }
 
       setLoadingFriends(true)
       try {
-        console.log("[v0] Loading friends for game invitations, user:", user.id)
-
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error("Friends fetch timeout")), 10000),
         )
@@ -241,8 +235,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
         const { data: friendsData, error } = (await Promise.race([friendsPromise, timeoutPromise])) as any
 
-        console.log("[v0] Friendships query result:", { friendsData, error })
-
         if (error) {
           console.error("[v0] Error loading friendships:", error)
           setFriends([])
@@ -250,7 +242,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         }
 
         if (!friendsData || friendsData.length === 0) {
-          console.log("[v0] No friendships found")
           setFriends([])
           setLastFriendsFetch(now)
           return
@@ -258,16 +249,12 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
         const friendIds = friendsData.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id))
 
-        console.log("[v0] Fetching profiles for friend IDs:", friendIds)
-
         const profilesPromise = supabase.from("profiles").select("id, full_name, email").in("id", friendIds)
 
         const { data: profilesData, error: profilesError } = (await Promise.race([
           profilesPromise,
           timeoutPromise,
         ])) as any
-
-        console.log("[v0] Profiles query result:", { profilesData, profilesError })
 
         if (profilesError) {
           console.error("[v0] Error loading friend profiles:", profilesError)
@@ -284,7 +271,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
           }
         })
 
-        console.log("[v0] Mapped friends with profiles:", friendsWithProfiles.length)
         setFriends(friendsWithProfiles)
         setLastFriendsFetch(now)
       } catch (error) {

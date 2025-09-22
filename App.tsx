@@ -31,7 +31,6 @@ const App: React.FC = () => {
 
   const checkUser = useCallback(async () => {
     try {
-      console.log("[v0] Starting user authentication check")
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error("Authentication timeout")), 10000),
       )
@@ -42,7 +41,6 @@ const App: React.FC = () => {
         data: { user },
       } = (await Promise.race([authPromise, timeoutPromise])) as any
 
-      console.log("[v0] User authentication result:", user ? "authenticated" : "not authenticated")
       setUser(user)
       setError(null)
     } catch (error) {
@@ -60,14 +58,12 @@ const App: React.FC = () => {
       const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
       if (!forceRefresh && now - lastDataFetch < CACHE_DURATION) {
-        console.log("[v0] Using cached player data")
         return
       }
 
       try {
         setDataLoading(true)
         setError(null)
-        console.log("[v0] Loading players from database")
 
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error("Database timeout")), 15000),
@@ -88,7 +84,6 @@ const App: React.FC = () => {
           name: profile.full_name || "Unknown User",
         }))
 
-        console.log("[v0] Successfully loaded players:", dbPlayers.length)
         setPlayers(dbPlayers)
         setLastDataFetch(now)
         setError(null)
@@ -104,8 +99,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const initializeApp = async () => {
-      console.log("[v0] Initializing application")
-
       const savedView = localStorage.getItem("poker-current-view") as View
       if (savedView && ["dashboard", "friends", "activeGame"].includes(savedView)) {
         setCurrentView(savedView)
@@ -113,8 +106,6 @@ const App: React.FC = () => {
 
       await checkUser()
       await loadPlayersFromDatabase()
-
-      console.log("[v0] Application initialization complete")
     }
 
     initializeApp()
@@ -136,7 +127,6 @@ const App: React.FC = () => {
       const newPlayer: Player = { id: generateId(), name: trimmedName }
       setPlayers((prevPlayers) => [...prevPlayers, newPlayer])
       setError(null)
-      console.log("[v0] Added new player:", trimmedName)
       return newPlayer
     },
     [players],
@@ -144,7 +134,6 @@ const App: React.FC = () => {
 
   const handleStartNewGame = useCallback((session: GameSession) => {
     try {
-      console.log("[v0] Starting new game:", session.name)
       const newSessionWithDefaults = {
         ...session,
         currentPhysicalPointsOnTable: 0,
@@ -162,20 +151,17 @@ const App: React.FC = () => {
   }, [])
 
   const handleSelectGame = useCallback((gameId: string) => {
-    console.log("[v0] Selecting game:", gameId)
     setActiveGameId(gameId)
     setCurrentView("activeGame")
     localStorage.setItem("poker-current-view", "activeGame")
   }, [])
 
   const handleUpdateSession = useCallback((updatedSession: GameSession) => {
-    console.log("[v0] Updating session:", updatedSession.id)
     setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? { ...updatedSession } : s)))
   }, [])
 
   const handleEndGame = useCallback(async (finalizedSession: GameSession) => {
     try {
-      console.log("[v0] Ending game:", finalizedSession.name)
       setDataLoading(true)
 
       const completedSession = {
@@ -204,7 +190,6 @@ const App: React.FC = () => {
       if (!user) return
 
       try {
-        console.log("[v0] Saving game results to database")
         const gameResult: GameResult = {
           gameId: session.id,
           gameName: session.name,
@@ -242,8 +227,6 @@ const App: React.FC = () => {
         if (error) {
           console.error("[v0] Database error saving game results:", error)
           throw error
-        } else {
-          console.log("[v0] Game results saved successfully")
         }
       } catch (error) {
         console.error("[v0] Error saving game results:", error)
@@ -255,7 +238,6 @@ const App: React.FC = () => {
 
   const handleDeleteGame = useCallback(
     (sessionId: string) => {
-      console.log("[v0] Deleting game:", sessionId)
       setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
       if (activeGameId === sessionId) {
         setActiveGameId(null)
@@ -267,7 +249,6 @@ const App: React.FC = () => {
   )
 
   const handleNavigateToDashboard = useCallback(() => {
-    console.log("[v0] Navigating to dashboard")
     setCurrentView("dashboard")
     setActiveGameId(null)
     localStorage.setItem("poker-current-view", "dashboard")
@@ -366,7 +347,6 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-surface-main">
       <Navbar
         setCurrentView={(view) => {
-          console.log("[v0] Navbar view change:", view)
           if (view === "dashboard") {
             setActiveGameId(null)
           }

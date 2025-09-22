@@ -789,14 +789,15 @@ export default function ActiveGameScreen({
     if (!user) return
 
     try {
-      const playerIds = session.playersInGame.map((p) => p.playerId).filter(Boolean)
+      const playerIds = session.playersInGame.map((p) => p.playerId).filter((id) => id && !id.startsWith("local-")) // Exclude local temporary IDs
+
       if (playerIds.length === 0) return
 
       const { data: friendships, error: friendshipsError } = await supabase
         .from("friendships")
         .select("friend_id, user_id")
         .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
-        .in("friend_id", playerIds.concat(playerIds.map(() => user.id)))
+        .in("friend_id", playerIds.concat([user.id])) // Fixed array concatenation
 
       if (friendshipsError) {
         console.error("Error loading friendships:", friendshipsError)
@@ -839,6 +840,8 @@ export default function ActiveGameScreen({
       session.playersInGame.forEach((player) => {
         if (player.playerId === user.id) {
           newStates[player.name] = "friends" // Self
+        } else if (player.playerId.startsWith("local-")) {
+          newStates[player.name] = "none"
         } else if (friendIds.has(player.playerId)) {
           newStates[player.name] = "friends"
         } else if (pendingRequestIds.has(player.playerId)) {
@@ -1501,8 +1504,7 @@ export default function ActiveGameScreen({
                 <div key={p.playerId} className="mb-3 p-3 bg-slate-700 rounded-md shadow">
                   <p className="font-semibold text-lg text-white">{p.name}</p>
                   <p className="text-text-primary">
-                    Total Buy-in:{" "}
-                    <span className="text-white">{formatCurrency(p.buyIns.reduce((s, b) => s + b.amount, 0))}</span> (
+                    Total Buy-in: <span className="text-white">{p.buyIns.reduce((s, b) => s + b.amount, 0)}</span> (
                     {p.buyIns.length} {p.buyIns.length === 1 ? "entry" : "entries"})
                   </p>
                   <p className="text-text-primary">

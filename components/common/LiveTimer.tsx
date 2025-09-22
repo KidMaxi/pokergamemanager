@@ -17,7 +17,9 @@ const LiveTimer: React.FC<LiveTimerProps> = ({ startTime, className = "" }) => {
       setDuration(calculateDuration(startTime))
     }, 1000)
 
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+    }
   }, [startTime])
 
   return <span className={`font-mono ${className}`}>{formatDuration(duration)}</span>
