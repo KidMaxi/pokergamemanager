@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import type { GameSession, Player, GameInvitation, Friendship } from "../types"
 import { generateId, formatDate, formatCurrency, calculateDuration, formatDurationCompact } from "../utils"
 import Button from "./common/Button"
@@ -156,97 +156,177 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
 
   const [pendingInvitations, setPendingInvitations] = useState<GameInvitation[]>([])
   const [loadingInvitations, setLoadingInvitations] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [lastInvitationsFetch, setLastInvitationsFetch] = useState<number>(0)
+  const [lastFriendsFetch, setLastFriendsFetch] = useState<number>(0)
 
-  const fetchPendingInvitations = async () => {
-    if (!user) return
+  const fetchPendingInvitations = useCallback(
+    async (forceRefresh = false) => {
+      if (!user) return
 
-    try {
-      setLoadingInvitations(true)
-      console.log("Fetching pending invitations for user:", user.id)
+      const now = Date.now()
+      const CACHE_DURATION = 2 * 60 * 1000 // 2 minutes
 
-      const { data, error } = await supabase
-        .from("game_invitations")
-        .select(`
+      if (!forceRefresh && now - lastInvitationsFetch < CACHE_DURATION) {
+        console.log("[v0] Using cached invitation data")
+        return
+      }
+
+      try {
+        setLoadingInvitations(true)
+        setError(null)
+        console.log("[v0] Fetching pending invitations for user:", user.id)
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Invitations fetch timeout")), 10000),
+        )
+
+        const queryPromise = supabase
+          .from("game_invitations")
+          .select(`
           *,
           game_session:game_sessions(name, start_time, status),
           inviter_profile:profiles!game_invitations_inviter_id_fkey(full_name, email)
         `)
-        .eq("invitee_id", user.id)
-        .eq("status", "pending")
-        .order("created_at", { ascending: false })
+          .eq("invitee_id", user.id)
+          .eq("status", "pending")
+          .order("created_at", { ascending: false })
 
-      if (error) {
-        console.error("Error fetching pending invitations:", error)
+        const { data, error } = (await Promise.race([queryPromise, timeoutPromise])) as any
+
+        if (error) {
+          console.error("[v0] Error fetching pending invitations:", error)
+          setError("Failed to load game invitations")
+          setPendingInvitations([])
+        } else {
+          console.log("[v0] Fetched pending invitations:", data?.length || 0)
+          setPendingInvitations(data || [])
+          setLastInvitationsFetch(now)
+        }
+      } catch (error) {
+        console.error("[v0] Game invitations feature error:", error)
         setPendingInvitations([])
-      } else {
-        console.log("Fetched pending invitations:", data?.length || 0)
-        setPendingInvitations(data || [])
+        setError("Game invitations temporarily unavailable")
+      } finally {
+        setLoadingInvitations(false)
       }
-    } catch (error) {
-      console.error("Game invitations feature not available yet:", error)
-      setPendingInvitations([])
-    } finally {
-      setLoadingInvitations(false)
-    }
-  }
+    },
+    [user, lastInvitationsFetch],
+  )
+
+  const loadFriends = useCallback(
+    async (forceRefresh = false) => {
+      if (!user) return
+
+      const now = Date.now()
+      const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
+      if (!forceRefresh && now - lastFriendsFetch < CACHE_DURATION) {
+        console.log("[v0] Using cached friends data")
+        return
+      }
+
+      setLoadingFriends(true)
+      try {
+        console.log("[v0] Loading friends for game invitations, user:", user.id)
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Friends fetch timeout")), 10000),
+        )
+
+        const friendsPromise = supabase
+          .from("friendships")
+          .select("id, user_id, friend_id, created_at")
+          .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+
+        const { data: friendsData, error } = (await Promise.race([friendsPromise, timeoutPromise])) as any
+
+        console.log("[v0] Friendships query result:", { friendsData, error })
+
+        if (error) {
+          console.error("[v0] Error loading friendships:", error)
+          setFriends([])
+          return
+        }
+
+        if (!friendsData || friendsData.length === 0) {
+          console.log("[v0] No friendships found")
+          setFriends([])
+          setLastFriendsFetch(now)
+          return
+        }
+
+        const friendIds = friendsData.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id))
+
+        console.log("[v0] Fetching profiles for friend IDs:", friendIds)
+
+        const profilesPromise = supabase.from("profiles").select("id, full_name, email").in("id", friendIds)
+
+        const { data: profilesData, error: profilesError } = (await Promise.race([
+          profilesPromise,
+          timeoutPromise,
+        ])) as any
+
+        console.log("[v0] Profiles query result:", { profilesData, profilesError })
+
+        if (profilesError) {
+          console.error("[v0] Error loading friend profiles:", profilesError)
+          setFriends([])
+          return
+        }
+
+        const friendsWithProfiles = friendsData.map((friendship) => {
+          const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
+          return {
+            ...friendship,
+            friend_id: friendId,
+            friend_profile: profilesData?.find((p) => p.id === friendId),
+          }
+        })
+
+        console.log("[v0] Mapped friends with profiles:", friendsWithProfiles.length)
+        setFriends(friendsWithProfiles)
+        setLastFriendsFetch(now)
+      } catch (error) {
+        console.error("[v0] Error loading friends:", error)
+        setFriends([])
+      } finally {
+        setLoadingFriends(false)
+      }
+    },
+    [user, lastFriendsFetch],
+  )
 
   useEffect(() => {
-    fetchPendingInvitations()
-  }, [user])
+    if (user) {
+      fetchPendingInvitations()
+    }
+  }, [user, fetchPendingInvitations])
 
-  const handleInvitationHandled = () => {
-    // Refresh invitations after handling one
-    fetchPendingInvitations()
+  const categorizedGames = useMemo(() => {
+    const sortGamesByDateDesc = (a: GameSession, b: GameSession) =>
+      new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
+
+    return {
+      active: gameSessions.filter((gs) => gs.status === "active").sort(sortGamesByDateDesc),
+      pendingClosure: gameSessions.filter((gs) => gs.status === "pending_close").sort(sortGamesByDateDesc),
+      completed: gameSessions.filter((gs) => gs.status === "completed").sort(sortGamesByDateDesc),
+    }
+  }, [gameSessions])
+
+  const openDeleteConfirmModal = (gameId: string, gameName: string, gameStatus: GameSession["status"]) => {
+    setGameToDelete({ id: gameId, name: gameName, status: gameStatus })
   }
 
-  const loadFriends = async () => {
-    if (!user) return
-
-    setLoadingFriends(true)
-    try {
-      // Get friendships
-      const { data: friendsData, error } = await supabase
-        .from("friendships")
-        .select("id, user_id, friend_id, created_at")
-        .eq("user_id", user.id)
-
-      if (error) {
-        console.error("Error loading friendships:", error)
-        setFriends([])
-        return
-      }
-
-      if (!friendsData || friendsData.length === 0) {
-        setFriends([])
-        return
-      }
-
-      // Get friend profiles
-      const friendIds = friendsData.map((f) => f.friend_id)
-      const { data: profilesData, error: profilesError } = await supabase
-        .from("profiles")
-        .select("id, full_name, email")
-        .in("id", friendIds)
-
-      if (profilesError) {
-        console.error("Error loading friend profiles:", profilesError)
-        setFriends([])
-        return
-      }
-
-      // Combine the data
-      const friendsWithProfiles = friendsData.map((friendship) => ({
-        ...friendship,
-        friend_profile: profilesData?.find((p) => p.id === friendship.friend_id),
-      }))
-
-      setFriends(friendsWithProfiles)
-    } catch (error) {
-      console.error("Error loading friends:", error)
-      setFriends([])
-    } finally {
-      setLoadingFriends(false)
+  const confirmDeleteGame = () => {
+    if (gameToDelete) {
+      onDeleteGame(gameToDelete.id)
+      setGameToDelete(null)
     }
+  }
+
+  const handleFriendToggle = (friendId: string) => {
+    setSelectedFriends((prev) => (prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]))
   }
 
   const handleStartNewGameSubmit = (e: React.FormEvent) => {
@@ -285,30 +365,30 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
     setSelectedFriends([])
   }
 
-  const openDeleteConfirmModal = (gameId: string, gameName: string, gameStatus: GameSession["status"]) => {
-    setGameToDelete({ id: gameId, name: gameName, status: gameStatus })
-  }
-
-  const confirmDeleteGame = () => {
-    if (gameToDelete) {
-      onDeleteGame(gameToDelete.id)
-      setGameToDelete(null)
-    }
-  }
-
-  const handleFriendToggle = (friendId: string) => {
-    setSelectedFriends((prev) => (prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]))
-  }
-
-  const sortGamesByDateDesc = (a: GameSession, b: GameSession) =>
-    new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
-
-  const activeGames = gameSessions.filter((gs) => gs.status === "active").sort(sortGamesByDateDesc)
-  const pendingClosureGames = gameSessions.filter((gs) => gs.status === "pending_close").sort(sortGamesByDateDesc)
-  const completedGames = gameSessions.filter((gs) => gs.status === "completed").sort(sortGamesByDateDesc)
+  // Added error display
+  const handleInvitationHandled = useCallback(() => {
+    // Refresh invitations after handling one
+    fetchPendingInvitations(true)
+  }, [fetchPendingInvitations])
 
   return (
     <div className="container mx-auto p-3 sm:p-4">
+      {error && (
+        <div className="mb-4 p-3 bg-red-900/20 border border-red-800 rounded-lg">
+          <p className="text-red-400 text-sm">{error}</p>
+          <button
+            onClick={() => {
+              setError(null)
+              fetchPendingInvitations(true)
+              loadFriends(true)
+            }}
+            className="mt-2 text-xs text-red-300 hover:text-red-200 underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <Button
         onClick={() => {
           setIsNewGameModalOpen(true)
@@ -347,10 +427,10 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         </section>
       )}
 
-      {activeGames.length > 0 && (
+      {categorizedGames.active.length > 0 && (
         <section className="mb-8">
           <h3 className="text-2xl font-semibold text-green-400 mb-4">Active Games</h3>
-          {activeGames.map((session) => (
+          {categorizedGames.active.map((session) => (
             <GameSessionCard
               key={session.id}
               session={session}
@@ -361,10 +441,10 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         </section>
       )}
 
-      {pendingClosureGames.length > 0 && (
+      {categorizedGames.pendingClosure.length > 0 && (
         <section className="mb-8">
           <h3 className="text-2xl font-semibold text-yellow-400 mb-4">Games Pending Closure</h3>
-          {pendingClosureGames.map((session) => (
+          {categorizedGames.pendingClosure.map((session) => (
             <GameSessionCard
               key={session.id}
               session={session}
@@ -375,10 +455,10 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         </section>
       )}
 
-      {completedGames.length > 0 && (
+      {categorizedGames.completed.length > 0 && (
         <section className="mb-8">
           <h3 className="text-2xl font-semibold text-red-400 mb-4">Completed Games</h3>
-          {completedGames.map((session) => (
+          {categorizedGames.completed.map((session) => (
             <GameSessionCard
               key={session.id}
               session={session}
@@ -395,7 +475,7 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         </Card>
       )}
 
-      {/* New Game Modal */}
+      {/* Existing modals */}
       <Modal isOpen={isNewGameModalOpen} onClose={() => setIsNewGameModalOpen(false)} title="Start New Poker Game">
         <form onSubmit={handleStartNewGameSubmit} className="space-y-4">
           <Input
@@ -469,7 +549,6 @@ const GameDashboard: React.FC<GameDashboardProps> = ({
         </form>
       </Modal>
 
-      {/* Delete Game Modal */}
       <Modal
         isOpen={!!gameToDelete}
         onClose={() => setGameToDelete(null)}

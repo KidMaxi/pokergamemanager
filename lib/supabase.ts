@@ -1,40 +1,22 @@
-import { createClient as createBrowserClient } from "./supabase/client"
-import { createClient as createServerClient } from "./supabase/server"
+import { createBrowserClient } from "@supabase/ssr"
 import { createClient } from "@supabase/supabase-js"
-import type { Database } from "./database.types"
 
-// Legacy client-side client (for backward compatibility)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
-
-let supabaseClient: ReturnType<typeof createClient<Database>> | null = null
-
-export const createClientComponentClient = () => {
-  if (!supabaseClient) {
-    supabaseClient = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    })
-  }
-  return supabaseClient
+// Browser client for client-side operations
+export function createClientComponentClient() {
+  return createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
 }
 
-export const createServerComponentClient = createServerClient
+// Default export for backward compatibility
+export const supabase = createClientComponentClient()
 
-// Admin client (uses service role key)
+// Admin client for administrative operations
 export const createAdminClient = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ""
-  return createClient<Database>(supabaseUrl, serviceRoleKey, {
+  return createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
   })
 }
-
-export { createBrowserClient, createServerClient }
-
-// Legacy export for backward compatibility
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)

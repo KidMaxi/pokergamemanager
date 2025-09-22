@@ -187,12 +187,6 @@ export interface Database {
         }
         Returns: void
       }
-      accept_game_invitation: {
-        Args: {
-          invitation_id: string
-        }
-        Returns: Json
-      }
     }
     Enums: {
       [_ in never]: never
