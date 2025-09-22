@@ -691,7 +691,7 @@ export default function Home() {
     // Show loading screen while checking auth
     if (authLoading) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-surface-main">
+        <div className="min-h-screen flex items-center justify-center bg-slate-900">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
             <p className="text-text-secondary">Loading...</p>
@@ -703,7 +703,7 @@ export default function Home() {
     // Show login screen if no user
     if (!user) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-surface-main px-4">
+        <div className="min-h-screen flex items-center justify-center bg-slate-900 px-4">
           <div className="text-center space-y-4 sm:space-y-6 max-w-sm sm:max-w-md mx-auto p-4 sm:p-6">
             <h1 className="text-2xl sm:text-3xl font-bold text-brand-primary leading-tight">
               Welcome to Poker Home Game Manager
@@ -733,7 +733,7 @@ export default function Home() {
     // Show main app loading if user is verified but data is still loading
     if (loading) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-surface-main">
+        <div className="min-h-screen flex items-center justify-center bg-slate-900">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto mb-4"></div>
             <p className="text-text-secondary">Loading your data...</p>
@@ -809,7 +809,7 @@ export default function Home() {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col bg-surface-main ${getBackgroundClass()}`}>
+    <div className={`min-h-screen flex flex-col bg-slate-900 ${getBackgroundClass()}`}>
       {/* Only show navbar if user is verified */}
       {user && emailVerified && (
         <Navbar

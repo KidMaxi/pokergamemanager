@@ -121,7 +121,7 @@ body {
     @apply border-border;
   }
   body {
-    @apply bg-surface-main text-foreground;
+    @apply bg-slate-900 text-foreground;
     background-color: #0a0f1a !important; /* Force dark background */
   }
 }

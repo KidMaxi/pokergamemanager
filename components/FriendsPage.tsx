@@ -46,7 +46,7 @@ const FriendsPage: React.FC = () => {
         const { data: friendsData, error: friendsError } = await supabase
           .from("friendships")
           .select("*")
-          .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+          .eq("user_id", user.id)
 
         console.log("[v0] Friendships query result:", { friendsData, friendsError })
 
@@ -55,7 +55,7 @@ const FriendsPage: React.FC = () => {
           // Don't throw here, just log and continue
         } else if (friendsData && friendsData.length > 0) {
           console.log("[v0] Found", friendsData.length, "friendships")
-          const friendIds = friendsData.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id))
+          const friendIds = friendsData.map((f) => f.friend_id)
           console.log("[v0] Fetching profiles for friend IDs:", friendIds)
 
           const { data: profilesData, error: profilesError } = await supabase
@@ -67,11 +67,9 @@ const FriendsPage: React.FC = () => {
 
           if (!profilesError && profilesData) {
             friendsWithProfiles = friendsData.map((friendship) => {
-              const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id
               return {
                 ...friendship,
-                friend_id: friendId, // Normalize the friend_id
-                friend_profile: profilesData.find((p) => p.id === friendId),
+                friend_profile: profilesData.find((p) => p.id === friendship.friend_id),
               }
             })
             console.log("[v0] Mapped friends with profiles:", friendsWithProfiles)
@@ -397,10 +395,9 @@ const FriendsPage: React.FC = () => {
       const { data: newFriendship, error: friendshipError } = await supabase
         .from("friendships")
         .select("*")
-        .or(
-          `and(user_id.eq.${user?.id},friend_id.eq.${requestDetails.sender_id}),and(user_id.eq.${requestDetails.sender_id},friend_id.eq.${user?.id})`,
-        )
-        .maybeSingle()
+        .eq("user_id", user?.id)
+        .eq("friend_id", requestDetails.sender_id)
+        .single()
 
       console.log("[v0] Friendship created:", { newFriendship, friendshipError })
 
@@ -474,13 +471,7 @@ const FriendsPage: React.FC = () => {
       console.log("[v0] Remove friendship result:", { data, error })
 
       if (error) {
-        console.error("[v0] RPC error removing friend:", error)
-        if (error.code === "42883") {
-          setError("Friend removal function not available. Please contact support.")
-        } else {
-          setError(`Failed to remove friend: ${error.message}`)
-        }
-        return
+        throw error
       }
 
       // Check if the function returned an error in the data

@@ -50,7 +50,7 @@ const EmailVerificationScreen: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface-main px-4">
+    <div className="min-h-screen flex items-center justify-center bg-slate-900 px-4">
       <div className="max-w-md mx-auto">
         <Card className="text-center">
           <div className="mb-6">
