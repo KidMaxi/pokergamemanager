@@ -93,12 +93,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log("🔄 Starting user signup process...")
 
+      if (!email?.trim() || !password?.trim() || !fullName?.trim()) {
+        return { error: new Error("All fields are required") as AuthError }
+      }
+
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email.trim(),
         password,
         options: {
           data: {
-            full_name: fullName,
+            full_name: fullName.trim(),
           },
         },
       })
@@ -110,9 +114,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       console.log("✅ User signup successful:", data.user?.id)
 
-      // The profile should be created automatically by the database trigger
-      // But let's add a small delay and check if it was created
       if (data.user) {
+        // Wait a bit for the database trigger to potentially create the profile
         setTimeout(async () => {
           try {
             const profile = await fetchProfile(data.user!.id)
@@ -120,18 +123,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               console.log("⚠️ Profile not found after signup, creating manually...")
 
               // Manually create profile if trigger didn't work
-              const { error: profileError } = await supabase.from("profiles").insert({
-                id: data.user!.id,
-                full_name: fullName,
-                email: email,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                is_admin: false,
-                preferences: {},
-                all_time_profit_loss: 0,
-                games_played: 0,
-                last_game_date: null,
-              })
+              const { error: profileError } = await supabase.from("profiles").upsert(
+                {
+                  id: data.user!.id,
+                  full_name: fullName.trim(),
+                  email: email.trim().toLowerCase(),
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                  is_admin: false,
+                  preferences: {},
+                  all_time_profit_loss: 0,
+                  games_played: 0,
+                  last_game_date: null,
+                },
+                {
+                  onConflict: "id",
+                },
+              )
 
               if (profileError) {
                 console.error("❌ Manual profile creation failed:", profileError)
@@ -156,8 +164,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     try {
+      if (!email?.trim() || !password?.trim()) {
+        return { error: new Error("Email and password are required") as AuthError }
+      }
+
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       })
 
@@ -188,7 +200,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: new Error("No user logged in") }
       }
 
-      const { error } = await supabase.from("profiles").update(updates).eq("id", user.id)
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id)
 
       if (!error) {
         await refreshProfile()

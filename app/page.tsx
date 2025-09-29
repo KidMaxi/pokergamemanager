@@ -336,10 +336,14 @@ export default function Home() {
     try {
       console.log("💾 Saving game session to database:", session.id)
 
+      if (!user?.id) {
+        throw new Error("User not authenticated")
+      }
+
       // Prepare the insert data
       const insertData: any = {
         id: session.id,
-        user_id: user!.id,
+        user_id: user.id,
         name: session.name,
         start_time: session.startTime,
         end_time: session.endTime,
@@ -358,12 +362,16 @@ export default function Home() {
 
       const { error } = await supabase.from("game_sessions").insert(insertData)
 
-      if (error) throw error
+      if (error) {
+        console.error("Database insert error:", error)
+        throw new Error(`Failed to save game: ${error.message}`)
+      }
 
       console.log("✅ Game session saved successfully")
+      return { success: true }
     } catch (error) {
       console.error("Error saving game session:", error)
-      throw error
+      throw error // Re-throw to be handled by caller
     }
   }
 
@@ -371,9 +379,12 @@ export default function Home() {
     try {
       console.log("🔄 Updating session in database:", session.id, session.status)
 
+      if (!user?.id) {
+        throw new Error("User not authenticated")
+      }
+
       // Only allow updates if user is the owner
       if (session.isOwner === false) {
-        console.error("User is not the owner of this game, cannot update")
         throw new Error("You don't have permission to update this game")
       }
 
@@ -399,17 +410,18 @@ export default function Home() {
         .from("game_sessions")
         .update(updateData)
         .eq("id", session.id)
-        .eq("user_id", user!.id)
+        .eq("user_id", user.id)
 
       if (error) {
         console.error("Database update error:", error)
-        throw error
+        throw new Error(`Failed to update game: ${error.message}`)
       }
 
       console.log("✅ Session updated successfully in database")
+      return { success: true }
     } catch (error) {
       console.error("Error updating session:", error)
-      throw error
+      throw error // Re-throw to be handled by caller
     }
   }
 
@@ -536,22 +548,27 @@ export default function Home() {
 
     try {
       await saveGameSessionToDatabase(newSessionWithDefaults)
+      console.log("✅ Game saved to database successfully")
 
       // Send invitations to selected friends (only if invitations system is available)
       if (session.invitedUsers && session.invitedUsers.length > 0) {
         try {
           await sendGameInvitations(newSessionWithDefaults.id, session.invitedUsers)
+          console.log("✅ Invitations sent successfully")
         } catch (error) {
           console.error("Error sending invitations (feature may not be available yet):", error)
-          // Don't fail the game creation if invitations fail
+          // Don't fail the game creation if invitations fail, but warn user
+          alert("Game created successfully, but invitations could not be sent. You can invite players manually.")
         }
       }
 
+      // Only update local state after successful database save
       setGameSessions((prevSessions) => [...prevSessions, newSessionWithDefaults])
       setActiveGameId(newSessionWithDefaults.id)
       setCurrentView("activeGame")
     } catch (error) {
-      alert("Failed to create game. Please try again.")
+      console.error("Failed to create game:", error)
+      alert(`Failed to create game: ${error.message || "Unknown error"}. Please try again.`)
     }
   }
 
@@ -562,34 +579,28 @@ export default function Home() {
 
   const handleUpdateSession = async (updatedSession: GameSession) => {
     try {
+      if (!user?.id) {
+        alert("You must be logged in to update games.")
+        return
+      }
+
       // Only allow updates if user is the owner
       if (updatedSession.isOwner === false) {
-        console.error("User is not the owner of this game, cannot update")
         alert("You don't have permission to modify this game.")
         return
       }
 
-      // Update database first
+      // Update database first - don't update local state if this fails
       await updateGameSessionInDatabase(updatedSession)
+      console.log("✅ Database update successful")
 
-      // Then update local state
+      // Only update local state after successful database update
       setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
-
-      console.log("✅ Session updated successfully")
+      console.log("✅ Local state updated successfully")
     } catch (error) {
       console.error("Error updating session:", error)
-
-      // Don't update local state if database update fails for non-owners
-      if (updatedSession.isOwner === false) {
-        alert("Failed to update game. You may not have permission to modify this game.")
-        return
-      }
-
-      // Still update local state for owners even if database update fails
-      setGameSessions((prevSessions) => prevSessions.map((s) => (s.id === updatedSession.id ? updatedSession : s)))
-
-      // Show user a warning but don't block the action
-      console.warn("Session updated locally but may not be saved to database")
+      alert(`Failed to update game: ${error.message || "Unknown error"}. Please try again.`)
+      // Don't update local state if database update fails
     }
   }
 
@@ -604,27 +615,38 @@ export default function Home() {
     try {
       console.log("[v0] Starting comprehensive game finalization...")
 
-      // First update the session in database
-      await updateGameSessionInDatabase(completedSession)
-
-      // Then use the new comprehensive finalization function
-      const finalizationResult = await finalizeGameWithComprehensiveTracking(completedSession)
-
-      if (finalizationResult.success) {
-        console.log("[v0] Comprehensive finalization successful:", finalizationResult.message)
-      } else {
-        console.error("[v0] Finalization failed:", finalizationResult.error)
-        // Still continue with local state update even if finalization fails
+      if (!user?.id) {
+        throw new Error("User not authenticated")
       }
 
+      if (completedSession.isOwner === false) {
+        throw new Error("You don't have permission to end this game")
+      }
+
+      // First update the session in database
+      await updateGameSessionInDatabase(completedSession)
+      console.log("✅ Game session updated in database")
+
+      // Then use the comprehensive finalization function
+      const finalizationResult = await finalizeGameWithComprehensiveTracking(completedSession)
+
+      if (!finalizationResult.success) {
+        console.error("[v0] Finalization failed:", finalizationResult.error)
+        throw new Error(finalizationResult.error || "Failed to finalize game")
+      }
+
+      console.log("[v0] Comprehensive finalization successful:", finalizationResult.message)
+
+      // Only update local state after all database operations succeed
       setGameSessions((prevSessions) => {
         return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
       })
+
+      alert("Game completed and all statistics updated successfully!")
     } catch (error) {
       console.error("Error ending game:", error)
-      setGameSessions((prevSessions) => {
-        return prevSessions.map((s) => (s.id === completedSession.id ? completedSession : s))
-      })
+      alert(`Failed to complete game: ${error.message || "Unknown error"}. The game may not have been properly saved.`)
+      // Don't update local state if database operations fail
     }
   }
 
@@ -637,29 +659,42 @@ export default function Home() {
         return
       }
 
+      if (!user?.id) {
+        alert("You must be logged in to delete games.")
+        return
+      }
+
       // If user is the owner, delete from database
       if (gameToDelete.isOwner !== false) {
         // Delete from database first
-        const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user!.id)
+        const { error } = await supabase.from("game_sessions").delete().eq("id", sessionId).eq("user_id", user.id)
 
         if (error) {
           console.error("Database delete error:", error)
-          throw error
+          throw new Error(`Failed to delete game: ${error.message}`)
         }
         console.log("✅ Game deleted successfully from database")
       } else {
-        // If user was invited, just remove from local state (don't delete from database)
-        // Optionally, we could also remove the invitation record
+        // If user was invited, remove the invitation record
         try {
-          await supabase.from("game_invitations").delete().eq("game_session_id", sessionId).eq("invitee_id", user!.id)
+          const { error } = await supabase
+            .from("game_invitations")
+            .delete()
+            .eq("game_session_id", sessionId)
+            .eq("invitee_id", user.id)
 
+          if (error) {
+            console.error("Error removing invitation:", error)
+            throw new Error(`Failed to remove game from your list: ${error.message}`)
+          }
           console.log("✅ Invitation record removed")
         } catch (error) {
-          console.warn("Could not remove invitation record (non-critical):", error)
+          console.error("Could not remove invitation record:", error)
+          throw error
         }
       }
 
-      // Update local state (remove from UI)
+      // Only update local state after successful database operation
       setGameSessions((prevSessions) => prevSessions.filter((s) => s.id !== sessionId))
 
       // If this was the active game, navigate back to dashboard
@@ -668,10 +703,12 @@ export default function Home() {
         setCurrentView("dashboard")
       }
 
-      console.log(gameToDelete.isOwner !== false ? "Game deleted successfully" : "Game removed from dashboard")
+      const successMessage =
+        gameToDelete.isOwner !== false ? "Game deleted successfully" : "Game removed from your dashboard"
+      alert(successMessage)
     } catch (error) {
       console.error("Error deleting/removing game:", error)
-      alert("Failed to delete/remove game. Please try again.")
+      alert(`Failed to delete/remove game: ${error.message || "Unknown error"}. Please try again.`)
     }
   }
 

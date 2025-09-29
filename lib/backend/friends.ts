@@ -27,15 +27,20 @@ export async function sendFriendRequest(receiverEmail: string): Promise<{ succes
       return { success: false, error: "Authentication required" }
     }
 
+    const normalizedEmail = receiverEmail.toLowerCase().trim()
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return { success: false, error: "Please enter a valid email address" }
+    }
+
     // Find receiver by email
     const { data: receiver, error: receiverError } = await supabase
       .from("profiles")
       .select("id")
-      .eq("email", receiverEmail.toLowerCase().trim())
+      .eq("email", normalizedEmail)
       .single()
 
     if (receiverError || !receiver) {
-      return { success: false, error: "User not found" }
+      return { success: false, error: "User not found with that email address" }
     }
 
     if (receiver.id === user.id) {
@@ -55,10 +60,10 @@ export async function sendFriendRequest(receiverEmail: string): Promise<{ succes
       return { success: false, error: "Already friends with this user" }
     }
 
-    // Check if request already exists
+    // Check if request already exists (in either direction)
     const { data: existingRequest } = await supabase
       .from("friend_requests")
-      .select("id, status")
+      .select("id, status, sender_id, receiver_id")
       .or(
         `and(sender_id.eq.${user.id},receiver_id.eq.${receiver.id}),and(sender_id.eq.${receiver.id},receiver_id.eq.${user.id})`,
       )
@@ -66,23 +71,37 @@ export async function sendFriendRequest(receiverEmail: string): Promise<{ succes
 
     if (existingRequest) {
       if (existingRequest.status === "pending") {
-        return { success: false, error: "Friend request already pending" }
+        if (existingRequest.sender_id === user.id) {
+          return { success: false, error: "Friend request already sent and pending" }
+        } else {
+          return {
+            success: false,
+            error: "This user has already sent you a friend request. Check your pending requests.",
+          }
+        }
       }
     }
 
-    // Send friend request
-    const { error: insertError } = await supabase.from("friend_requests").insert({
-      sender_id: user.id,
-      receiver_id: receiver.id,
-      status: "pending",
-    })
+    const { error: insertError } = await supabase.from("friend_requests").upsert(
+      {
+        sender_id: user.id,
+        receiver_id: receiver.id,
+        status: "pending",
+        created_at: new Date().toISOString(),
+      },
+      {
+        onConflict: "sender_id,receiver_id",
+      },
+    )
 
     if (insertError) {
+      console.error("Error inserting friend request:", insertError)
       return { success: false, error: `Failed to send friend request: ${insertError.message}` }
     }
 
     return { success: true }
   } catch (error) {
+    console.error("Unexpected error in sendFriendRequest:", error)
     return {
       success: false,
       error: `Unexpected error: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -105,26 +124,54 @@ export async function acceptFriendRequest(requestId: string): Promise<{ success:
       return { success: false, error: "Authentication required" }
     }
 
-    // Get the friend request
+    // Get the friend request first
     const { data: request, error: requestError } = await supabase
       .from("friend_requests")
-      .select("sender_id, receiver_id")
+      .select("sender_id, receiver_id, status")
       .eq("id", requestId)
       .eq("receiver_id", user.id)
-      .eq("status", "pending")
       .single()
 
     if (requestError || !request) {
-      return { success: false, error: "Friend request not found" }
+      return { success: false, error: "Friend request not found or you don't have permission to accept it" }
     }
 
-    // Create friendship (both directions)
-    const { error: friendshipError } = await supabase.from("friendships").insert([
-      { user_id: request.sender_id, friend_id: request.receiver_id },
-      { user_id: request.receiver_id, friend_id: request.sender_id },
-    ])
+    if (request.status !== "pending") {
+      return { success: false, error: "This friend request has already been processed" }
+    }
+
+    // Check if friendship already exists (race condition protection)
+    const { data: existingFriendship } = await supabase
+      .from("friendships")
+      .select("id")
+      .or(
+        `and(user_id.eq.${request.sender_id},friend_id.eq.${request.receiver_id}),and(user_id.eq.${request.receiver_id},friend_id.eq.${request.sender_id})`,
+      )
+      .single()
+
+    if (existingFriendship) {
+      // Update request status even if friendship exists
+      await supabase
+        .from("friend_requests")
+        .update({ status: "accepted", updated_at: new Date().toISOString() })
+        .eq("id", requestId)
+
+      return { success: false, error: "You are already friends with this user" }
+    }
+
+    // Create friendship (both directions) using upsert for safety
+    const { error: friendshipError } = await supabase.from("friendships").upsert(
+      [
+        { user_id: request.sender_id, friend_id: request.receiver_id, created_at: new Date().toISOString() },
+        { user_id: request.receiver_id, friend_id: request.sender_id, created_at: new Date().toISOString() },
+      ],
+      {
+        onConflict: "user_id,friend_id",
+      },
+    )
 
     if (friendshipError) {
+      console.error("Error creating friendship:", friendshipError)
       return { success: false, error: `Failed to create friendship: ${friendshipError.message}` }
     }
 
@@ -138,11 +185,14 @@ export async function acceptFriendRequest(requestId: string): Promise<{ success:
       .eq("id", requestId)
 
     if (updateError) {
-      return { success: false, error: `Failed to update request: ${updateError.message}` }
+      console.error("Error updating request status:", updateError)
+      // Don't fail the whole operation if status update fails
+      console.warn("Friendship created but request status update failed")
     }
 
     return { success: true }
   } catch (error) {
+    console.error("Unexpected error in acceptFriendRequest:", error)
     return {
       success: false,
       error: `Unexpected error: ${error instanceof Error ? error.message : "Unknown error"}`,

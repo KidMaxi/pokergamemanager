@@ -389,7 +389,7 @@ export default function ActiveGameScreen({
     }
   }
 
-  const handleInviteFriendsToGame = async () => {
+  const handleInviteFriendsToGame_OLD = async () => {
     if (!user || selectedFriends.length === 0) return
 
     try {
@@ -789,42 +789,64 @@ export default function ActiveGameScreen({
     if (!user) return
 
     try {
-      const playerIds = session.playersInGame.map((p) => p.playerId).filter((id) => id && !id.startsWith("local-")) // Exclude local temporary IDs
+      console.log("[v0] Loading friend relationships for players...")
 
-      if (playerIds.length === 0) return
+      const validPlayerIds = session.playersInGame
+        .map((p) => p.playerId)
+        .filter((id) => id && !id.startsWith("local-") && id !== user.id) // Exclude local IDs and current user
 
+      console.log("[v0] Valid player IDs for friendship check:", validPlayerIds)
+
+      if (validPlayerIds.length === 0) {
+        console.log("[v0] No valid player IDs to check friendships for")
+        // Set all local players to "none" status
+        const newStates: Record<string, "none" | "pending" | "friends"> = {}
+        session.playersInGame.forEach((player) => {
+          if (player.playerId === user.id) {
+            newStates[player.name] = "friends" // Self
+          } else {
+            newStates[player.name] = "none" // Local or invalid players
+          }
+        })
+        setFriendRequestStates(newStates)
+        return
+      }
+
+      // Load friendships for valid player IDs only
       const { data: friendships, error: friendshipsError } = await supabase
         .from("friendships")
         .select("friend_id, user_id")
-        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
-        .in("friend_id", playerIds.concat([user.id])) // Fixed array concatenation
+        .eq("user_id", user.id)
+        .in("friend_id", validPlayerIds)
 
       if (friendshipsError) {
-        console.error("Error loading friendships:", friendshipsError)
+        console.error("[v0] Error loading friendships:", friendshipsError)
         return
       }
 
-      // Extract friend IDs considering bidirectional relationships
+      console.log("[v0] Loaded friendships:", friendships)
+
+      // Extract friend IDs
       const friendIds = new Set<string>()
       friendships?.forEach((f) => {
-        if (f.user_id === user.id) {
-          friendIds.add(f.friend_id)
-        } else if (f.friend_id === user.id) {
-          friendIds.add(f.user_id)
-        }
+        friendIds.add(f.friend_id)
       })
 
-      // Load pending friend requests
+      // Load pending friend requests for valid player IDs only
       const { data: requests, error: requestsError } = await supabase
         .from("friend_requests")
-        .select("sender_id, receiver_id")
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .select("sender_id, receiver_id, status")
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.in.(${validPlayerIds.join(",")})),and(receiver_id.eq.${user.id},sender_id.in.(${validPlayerIds.join(",")}))`,
+        )
         .eq("status", "pending")
 
       if (requestsError) {
-        console.error("Error loading friend requests:", requestsError)
+        console.error("[v0] Error loading friend requests:", requestsError)
         return
       }
+
+      console.log("[v0] Loaded friend requests:", requests)
 
       const pendingRequestIds = new Set<string>()
       requests?.forEach((r) => {
@@ -841,7 +863,7 @@ export default function ActiveGameScreen({
         if (player.playerId === user.id) {
           newStates[player.name] = "friends" // Self
         } else if (player.playerId.startsWith("local-")) {
-          newStates[player.name] = "none"
+          newStates[player.name] = "none" // Local temporary players
         } else if (friendIds.has(player.playerId)) {
           newStates[player.name] = "friends"
         } else if (pendingRequestIds.has(player.playerId)) {
@@ -851,9 +873,10 @@ export default function ActiveGameScreen({
         }
       })
 
+      console.log("[v0] Updated friend request states:", newStates)
       setFriendRequestStates(newStates)
     } catch (error) {
-      console.error("Error in loadFriendRelationships:", error)
+      console.error("[v0] Error in loadFriendRelationships:", error)
     }
   }
 
@@ -864,6 +887,8 @@ export default function ActiveGameScreen({
     setLoadingFriendRequests((prev) => ({ ...prev, [playerName]: true }))
 
     try {
+      console.log("[v0] Sending friend request to player:", playerName)
+
       // Find the target user by their full name
       const { data: targetUser, error: userError } = await supabase
         .from("profiles")
@@ -872,19 +897,28 @@ export default function ActiveGameScreen({
         .single()
 
       if (userError || !targetUser) {
-        console.error("Target user not found:", userError)
+        console.error("[v0] Target user not found:", userError)
+        alert(`Could not find user "${playerName}". They may not have an account yet.`)
         return
       }
 
-      // Send friend request
-      const { error: requestError } = await supabase.from("friend_requests").insert({
-        sender_id: user.id,
-        receiver_id: targetUser.id,
-        status: "pending",
-      })
+      console.log("[v0] Found target user:", targetUser)
+
+      const { error: requestError } = await supabase.from("friend_requests").upsert(
+        {
+          sender_id: user.id,
+          receiver_id: targetUser.id,
+          status: "pending",
+          created_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "sender_id,receiver_id",
+        },
+      )
 
       if (requestError) {
-        console.error("Error sending friend request:", requestError)
+        console.error("[v0] Error sending friend request:", requestError)
+        alert(`Failed to send friend request: ${requestError.message}`)
         return
       }
 
@@ -894,9 +928,11 @@ export default function ActiveGameScreen({
         [playerName]: "pending",
       }))
 
-      console.log(`Friend request sent to ${playerName}`)
+      console.log("[v0] Friend request sent successfully to", playerName)
+      alert(`Friend request sent to ${playerName}!`)
     } catch (error) {
-      console.error("Error sending friend request:", error)
+      console.error("[v0] Error sending friend request:", error)
+      alert("Failed to send friend request. Please try again.")
     } finally {
       setLoadingFriendRequests((prev) => ({ ...prev, [playerName]: false }))
     }
@@ -909,7 +945,7 @@ export default function ActiveGameScreen({
   }
 
   // FIXED: Enhanced invitation handling with proper error handling and state updates
-  const handleInviteFriendsToGameOld = async () => {
+  const handleInviteFriendsToGame = async () => {
     if (!user || selectedFriendsToInvite.length === 0) return
 
     setInviteLoading(true)
@@ -923,6 +959,14 @@ export default function ActiveGameScreen({
         currentInvitedUsers: session.invitedUsers,
       })
 
+      if (!user?.id) {
+        throw new Error("User not authenticated")
+      }
+
+      if (session.isOwner === false) {
+        throw new Error("You don't have permission to invite friends to this game")
+      }
+
       // Step 1: Create invitation records in database
       const invitations = selectedFriendsToInvite.map((friendId) => ({
         game_session_id: session.id,
@@ -933,7 +977,9 @@ export default function ActiveGameScreen({
 
       const { data: createdInvitations, error: invitationError } = await supabase
         .from("game_invitations")
-        .insert(invitations)
+        .upsert(invitations, {
+          onConflict: "game_session_id,invitee_id",
+        })
         .select()
 
       if (invitationError) {
@@ -945,11 +991,15 @@ export default function ActiveGameScreen({
 
       // Step 2: Update the game session with new invited users
       const currentInvitedUsers = session.invitedUsers || []
-      const updatedInvitedUsers = [...currentInvitedUsers, ...selectedFriendsToInvite]
+      const newInvitedUsers = selectedFriendsToInvite.filter((id) => !currentInvitedUsers.includes(id))
+      const updatedInvitedUsers = [...currentInvitedUsers, ...newInvitedUsers]
 
       const { error: updateError } = await supabase
         .from("game_sessions")
-        .update({ invited_users: updatedInvitedUsers })
+        .update({
+          invited_users: updatedInvitedUsers,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", session.id)
         .eq("user_id", user.id)
 
@@ -982,12 +1032,9 @@ export default function ActiveGameScreen({
         setIsInviteFriendsModalOpen(false)
         setInviteSuccess("")
       }, 2000)
-
-      // Step 6: Refresh friends list to update UI
-      await loadFriendsForInvitation()
     } catch (error: any) {
-      console.error("Error in friend invitation process:", error)
-      setInviteError(`Failed to send invitations: ${error.message}`)
+      console.error("Error inviting friends:", error)
+      setInviteError(error.message || "Failed to send invitations. Please try again.")
     } finally {
       setInviteLoading(false)
     }
@@ -2208,7 +2255,7 @@ export default function ActiveGameScreen({
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleInviteFriendsToGameOld}
+                  onClick={handleInviteFriendsToGame}
                   variant="primary"
                   disabled={inviteLoading || selectedFriendsToInvite.length === 0}
                 >
